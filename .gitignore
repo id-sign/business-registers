@@ -1,0 +1,10 @@
+/vendor/
+/composer.lock
+/composer.phar
+/.idea/
+/phpstan.neon
+/phpunit.xml
+/.phpunit.cache/
+/.php-cs-fixer.cache
+/.claude/settings.local.json
+/SPEC.md
