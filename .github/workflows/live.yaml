@@ -1,0 +1,17 @@
+name: Live tests
+
+on:
+  workflow_dispatch: ~
+
+jobs:
+  live:
+    name: Live registers (PHP 8.5)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          coverage: none
+      - run: composer install --no-progress
+      - run: vendor/bin/phpunit --testsuite live

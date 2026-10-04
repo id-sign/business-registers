@@ -1,0 +1,7 @@
+{
+  "actionSucceed" : false,
+  "errorWrappers" : [ {
+    "error" : "VOW-ERR-11",
+    "message" : "SENTINEL-VIES-TEXT"
+  } ]
+}

@@ -1,0 +1,12 @@
+{
+  "obchodniJmeno": "Fiktivní subjekt bez IČO",
+  "icoId": "ARES_00369838",
+  "sidlo": {
+    "kodStatu": "AT",
+    "nazevStatu": "Rakousko",
+    "textovaAdresa": "Hauptstraße 27, 3443 Rappoltenkirchen, Rakousko"
+  },
+  "seznamRegistraci": {
+    "stavZdrojeRos": "NEEXISTUJICI"
+  }
+}

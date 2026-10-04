@@ -1,0 +1,30 @@
+{
+  "ico": "03024130",
+  "obchodniJmeno": "Jan Testovací",
+  "sidlo": {
+    "kodStatu": "CZ",
+    "nazevStatu": "Česká republika",
+    "kodObce": 554782,
+    "nazevObce": "Praha",
+    "nazevUlice": "Fiktivní",
+    "cisloDomovni": 12,
+    "nazevCastiObce": "Nové Město",
+    "kodAdresnihoMista": 12345678,
+    "psc": 11000,
+    "textovaAdresa": "Fiktivní 12, Nové Město, 11000 Praha 1",
+    "typCisloDomovni": 1
+  },
+  "pravniForma": "101",
+  "financniUrad": "001",
+  "datumVzniku": "2010-01-15",
+  "datumAktualizace": "2026-05-01",
+  "dic": "CZ7001019999",
+  "icoId": "03024130",
+  "czNace2008": ["62010"],
+  "seznamRegistraci": {
+    "stavZdrojeRos": "AKTIVNI",
+    "stavZdrojeRzp": "AKTIVNI",
+    "stavZdrojeDph": "AKTIVNI"
+  },
+  "primarniZdroj": "ros"
+}

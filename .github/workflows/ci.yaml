@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  pull_request: ~
+  push:
+    branches: [main]
+
+jobs:
+  cs-fixer:
+    name: PHP CS Fixer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+      - run: composer validate --strict
+      - run: composer install --no-progress
+      - run: vendor/bin/php-cs-fixer fix --dry-run --diff
+
+  phpstan:
+    name: PHPStan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+      - run: composer install --no-progress
+      - run: vendor/bin/phpstan analyse
+
+  tests:
+    name: PHPUnit (PHP ${{ matrix.php }}, HttpClient ${{ matrix.http-client }}, ${{ matrix.deps }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - php: '8.4'
+            http-client: '7.4.*'
+            deps: highest
+          - php: '8.4'
+            http-client: '^8.0'
+            deps: highest
+          - php: '8.5'
+            http-client: '7.4.*'
+            deps: highest
+          - php: '8.5'
+            http-client: '^8.0'
+            deps: highest
+          - php: '8.4'
+            http-client: '7.4.*'
+            deps: lowest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+      - run: composer require --dev --no-update "symfony/http-client:${{ matrix.http-client }}"
+      - run: composer update --no-progress ${{ matrix.deps == 'lowest' && '--prefer-lowest --prefer-stable' || '' }}
+      - run: vendor/bin/phpunit

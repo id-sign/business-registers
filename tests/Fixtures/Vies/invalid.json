@@ -1,0 +1,19 @@
+{
+  "countryCode" : "CZ",
+  "vatNumber" : "11111111",
+  "requestDate" : "2026-10-03T21:02:07.463Z",
+  "valid" : false,
+  "requestIdentifier" : "",
+  "name" : "---",
+  "address" : "---",
+  "traderName" : "---",
+  "traderStreet" : "---",
+  "traderPostalCode" : "---",
+  "traderCity" : "---",
+  "traderCompanyType" : "---",
+  "traderNameMatch" : "NOT_PROCESSED",
+  "traderStreetMatch" : "NOT_PROCESSED",
+  "traderPostalCodeMatch" : "NOT_PROCESSED",
+  "traderCityMatch" : "NOT_PROCESSED",
+  "traderCompanyTypeMatch" : "NOT_PROCESSED"
+}
