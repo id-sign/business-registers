@@ -5,7 +5,8 @@ declare(strict_types=1);
 namespace IdSign\BusinessRegisters\Ares;
 
 /**
- * Criteria of an ARES search; at least one criterion must be filled and the limit must be 1–1 000.
+ * Criteria of an ARES search; at least one criterion must be filled, the limit must be 1–1 000 and the offset 0 or
+ * greater.
  */
 final readonly class CompanySearch
 {
@@ -17,7 +18,7 @@ final readonly class CompanySearch
      * @param list<string> $naceCodes        czNace
      * @param list<string> $taxOfficeCodes   financniUrad
      * @param int          $limit            pocet
-     * @param int          $offset           start
+     * @param int          $offset           start (0 or greater)
      * @param list<string> $orderBy          razeni, e.g. ['obchodniJmeno'] or ['-ico']
      */
     public function __construct(

@@ -13,7 +13,12 @@ use IdSign\BusinessRegisters\VatId;
  */
 final readonly class Company
 {
-    private const array NATURAL_PERSON_LEGAL_FORMS = ['101', '102', '103', '104', '105', '106', '107', '108'];
+    /**
+     * Legal forms of natural persons per the ARES code list PravniForma: 101–108, 424 and 425 (source `res`) and 100
+     * (sources `com`, `rzp`). 425, a branch of a foreign natural person, is included because its name carries a
+     * person's name and is treated as a natural person for personal-data protection.
+     */
+    private const array NATURAL_PERSON_LEGAL_FORMS = ['100', '101', '102', '103', '104', '105', '106', '107', '108', '424', '425'];
 
     /**
      * @param string       $aresId               company id, or ARES_######## for a subject without one
@@ -50,7 +55,8 @@ final readonly class Company
     }
 
     /**
-     * Legal forms 101–108 (self-employed natural persons).
+     * Whether the legal form is one of a natural person (self-employed person, natural person in the commercial
+     * register, or an enterprise or branch of a foreign natural person).
      */
     public function isNaturalPerson(): bool
     {

@@ -14,11 +14,13 @@ use IdSign\BusinessRegisters\Exception\InvalidInput;
 use IdSign\BusinessRegisters\Exception\InvalidResponse;
 use IdSign\BusinessRegisters\Exception\ServiceUnavailable;
 use IdSign\BusinessRegisters\Source;
+use IdSign\BusinessRegisters\Tests\Double\CountingHttpClient;
 use IdSign\BusinessRegisters\Tests\FixtureLoader;
 use IdSign\BusinessRegisters\VatId;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\HttpClient\Exception\TransportException;
 use Symfony\Component\HttpClient\MockHttpClient;
 use Symfony\Component\HttpClient\Response\MockResponse;
 
@@ -79,6 +81,32 @@ final class VatRegisterClientTest extends TestCase
         }
 
         return $ids;
+    }
+
+    /**
+     * Answers every request with one subject per requested number.
+     *
+     * @param array<int, array{int, string|\Throwable}> $failures replace the answer, by ordinal of the request
+     */
+    private static function countingClient(array $failures = []): CountingHttpClient
+    {
+        return new CountingHttpClient(static function (int $ordinal, string $method, string $url, array $options) use ($failures): array {
+            if (isset($failures[$ordinal])) {
+                return $failures[$ordinal];
+            }
+
+            $sent = $options['body'] ?? null;
+            if (!\is_string($sent)) {
+                throw new \LogicException('The request body is not a string.');
+            }
+            preg_match_all('~<roz:dic>(\d+)</roz:dic>~', $sent, $matches);
+            $subjects = '';
+            foreach ($matches[1] as $number) {
+                $subjects .= '<statusSubjektu typSubjektu="PLATCE_DPH" dic="'.$number.'" nespolehlivyPlatce="NE" cisloFu="13"/>';
+            }
+
+            return [200, str_replace('</StatusNespolehlivySubjektRozsirenyResponse>', $subjects.'</StatusNespolehlivySubjektRozsirenyResponse>', self::EMPTY_ANSWER)];
+        });
     }
 
     public function testClientIsAVatRegister(): void
@@ -175,6 +203,28 @@ final class VatRegisterClientTest extends TestCase
         } catch (InvalidInput) {
             self::assertSame(0, $httpClient->getRequestsCount());
         }
+    }
+
+    public function testFindAndFindManyRejectAForeignVatIdGivenAsAnObjectWithoutAnyRequest(): void
+    {
+        $httpClient = new MockHttpClient(self::emptyAnswer());
+        $client = new VatRegisterClient($httpClient);
+        $foreign = VatId::parse('DE811115368');
+
+        $rejected = 0;
+        foreach ([
+            static fn () => $client->find($foreign),
+            static fn () => $client->findMany([VatId::parse('CZ45274649'), $foreign]),
+        ] as $call) {
+            try {
+                $call();
+            } catch (InvalidInput) {
+                ++$rejected;
+            }
+        }
+
+        self::assertSame(2, $rejected);
+        self::assertSame(0, $httpClient->getRequestsCount());
     }
 
     // --- find ---
@@ -391,6 +441,182 @@ final class VatRegisterClientTest extends TestCase
         self::fail('Expected InvalidResponse was not thrown.');
     }
 
+    // --- concurrency ---
+
+    /**
+     * @return list<string>
+     */
+    private static function vatIdsOf(VatSubjects $subjects): array
+    {
+        return array_map(static fn (VatSubject $subject): string => (string) $subject->vatId, $subjects->all());
+    }
+
+    public function testFindManyHasAtMostFourBatchesOpenByDefault(): void
+    {
+        $http = self::countingClient();
+        $ids = self::vatIds(550);
+
+        $subjects = new VatRegisterClient($http)->findMany($ids);
+
+        self::assertSame(4, $http->maxOpen);
+        self::assertSame(6, $http->issued);
+        self::assertSame($ids, self::vatIdsOf($subjects));
+    }
+
+    /**
+     * @return iterable<string, array{int, int, int}> concurrency, number of VAT ids, expected peak of open requests
+     */
+    public static function provideConcurrencyShapes(): iterable
+    {
+        yield 'one at a time' => [1, 250, 1];
+        yield 'waves of two' => [2, 250, 2];
+        yield 'waves of three' => [3, 450, 3];
+        yield 'fewer batches than the concurrency' => [4, 250, 3];
+        yield 'waves of four' => [4, 550, 4];
+        yield 'a single batch' => [4, 100, 1];
+    }
+
+    #[DataProvider('provideConcurrencyShapes')]
+    public function testFindManyNeverHasMoreBatchesOpenThanMaxConcurrencyAndKeepsTheSequentialResult(int $concurrency, int $count, int $expectedPeak): void
+    {
+        $http = self::countingClient();
+        $ids = self::vatIds($count);
+
+        $subjects = new VatRegisterClient($http, maxConcurrency: $concurrency)->findMany($ids);
+
+        self::assertSame($expectedPeak, $http->maxOpen);
+        self::assertSame((int) ceil($count / 100), $http->issued);
+        self::assertSame(0, $http->open);
+        self::assertSame($ids, self::vatIdsOf($subjects));
+    }
+
+    /**
+     * @return iterable<string, array{int, int, int}> concurrency, ordinal of the failing batch, expected number of requests
+     */
+    public static function provideFailureWaves(): iterable
+    {
+        yield 'sequential, second batch' => [1, 1, 2];
+        yield 'waves of two, second batch' => [2, 1, 2];
+        yield 'waves of two, first batch of the second wave' => [2, 2, 4];
+        yield 'waves of three, first batch' => [3, 0, 3];
+        yield 'waves of three, first batch of the second wave' => [3, 3, 6];
+        yield 'waves of four, second batch' => [4, 1, 4];
+        yield 'waves of four, last batch of the second wave' => [4, 5, 6];
+    }
+
+    #[DataProvider('provideFailureWaves')]
+    public function testFindManyStopsAfterTheWaveWithTheFailingBatchAndThrowsTheFirstFailureInSendingOrder(int $concurrency, int $failingBatch, int $expectedRequests): void
+    {
+        $failures = [];
+        for ($ordinal = $failingBatch + 1; $ordinal < 6; ++$ordinal) {
+            $failures[$ordinal] = [500, FixtureLoader::read('Adis/soap-fault.xml')];
+        }
+        $failures[$failingBatch] = [200, FixtureLoader::read('Adis/invalid.xml')];
+        $http = self::countingClient($failures);
+        $client = new VatRegisterClient($http, maxConcurrency: $concurrency);
+
+        try {
+            $client->findMany(self::vatIds(550));
+            self::fail('Expected InvalidResponse was not thrown.');
+        } catch (InvalidResponse $e) {
+            self::assertSame(Source::Adis, $e->source);
+        }
+
+        self::assertSame($expectedRequests, $http->issued);
+    }
+
+    /**
+     * @return iterable<string, array{int, string|\Throwable, class-string<\Throwable>, string|null}> status, body, exception, error code
+     */
+    public static function provideBatchFailures(): iterable
+    {
+        yield 'soap fault' => [500, FixtureLoader::read('Adis/soap-fault.xml'), ServiceUnavailable::class, 'soapenv:Server'];
+        yield 'http error without a fault' => [503, 'Service Unavailable', ServiceUnavailable::class, null];
+        yield 'answer that is not xml' => [200, FixtureLoader::read('Adis/invalid.xml'), InvalidResponse::class, null];
+        yield 'transport error' => [200, new TransportException('connection reset'), ServiceUnavailable::class, null];
+    }
+
+    /**
+     * @param class-string<\Throwable> $exception
+     */
+    #[DataProvider('provideBatchFailures')]
+    public function testFindManyFailureOfOneBatchInAWaveThrowsTheSameExceptionAsTheSequentialPath(int $status, string|\Throwable $body, string $exception, ?string $errorCode): void
+    {
+        $failures = [1 => [$status, $body], 2 => [500, 'Internal Server Error'], 3 => [500, 'Internal Server Error']];
+        $http = self::countingClient($failures);
+        $client = new VatRegisterClient($http, maxConcurrency: 4);
+
+        try {
+            $client->findMany(self::vatIds(550));
+            self::fail('Expected an exception was not thrown.');
+        } catch (ServiceUnavailable|InvalidResponse $e) {
+            self::assertInstanceOf($exception, $e);
+            self::assertSame(Source::Adis, $e->source);
+            if ($e instanceof ServiceUnavailable) {
+                self::assertSame($errorCode, $e->errorCode);
+            }
+        }
+
+        self::assertSame(4, $http->issued);
+    }
+
+    public function testFindManySubjectRepeatedInAnotherBatchIsInvalidResponseFromAdis(): void
+    {
+        $subject = '<statusSubjektu typSubjektu="PLATCE_DPH" dic="45274649" nespolehlivyPlatce="NE" cisloFu="13"/>';
+        $client = new VatRegisterClient(new MockHttpClient([self::answerWith($subject), self::answerWith($subject)]), maxConcurrency: 2);
+
+        try {
+            $client->findMany(self::vatIds(101));
+        } catch (InvalidResponse $e) {
+            self::assertSame(Source::Adis, $e->source);
+
+            return;
+        }
+
+        self::fail('Expected InvalidResponse was not thrown.');
+    }
+
+    /**
+     * @return iterable<string, array{int}>
+     */
+    public static function provideInvalidMaxConcurrency(): iterable
+    {
+        yield 'zero' => [0];
+        yield 'negative' => [-1];
+        yield 'above the limit' => [5];
+        yield 'far above the limit' => [100];
+    }
+
+    #[DataProvider('provideInvalidMaxConcurrency')]
+    public function testMaxConcurrencyOutsideOneToFourIsRejectedByTheConstructor(int $maxConcurrency): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        $client = new VatRegisterClient(new MockHttpClient(), maxConcurrency: $maxConcurrency);
+
+        unset($client);
+    }
+
+    /**
+     * @return iterable<string, array{int}>
+     */
+    public static function provideValidMaxConcurrency(): iterable
+    {
+        yield 'one' => [1];
+        yield 'two' => [2];
+        yield 'three' => [3];
+        yield 'four' => [4];
+    }
+
+    #[DataProvider('provideValidMaxConcurrency')]
+    public function testMaxConcurrencyFromOneToFourIsAccepted(int $maxConcurrency): void
+    {
+        $subjects = new VatRegisterClient(new MockHttpClient(self::xml('status-mixed.xml')), maxConcurrency: $maxConcurrency)
+            ->findMany(['CZ45274649']);
+
+        self::assertCount(4, $subjects);
+    }
+
     // --- failures ---
 
     public function testHttpErrorIsServiceUnavailableFromAdisMentioningTheStatusButNotTheBody(): void
@@ -410,13 +636,124 @@ final class VatRegisterClientTest extends TestCase
         self::fail('Expected ServiceUnavailable was not thrown.');
     }
 
-    public function testSoapFaultWithHttpErrorIsServiceUnavailable(): void
+    /**
+     * The fixture is a hand-built copy of the real ADIS answer to a request with an unknown element (HTTP 500, empty
+     * SOAP header, faultcode soapenv:Server); only the faultstring, an internal Java stack in reality, is replaced.
+     */
+    public function testSoapFaultWithHttpErrorIsServiceUnavailableCarryingTheFaultCode(): void
     {
         $client = new VatRegisterClient(new MockHttpClient(self::xml('soap-fault.xml', 500)));
 
-        $this->expectException(ServiceUnavailable::class);
+        try {
+            $client->findMany(['CZ45274649']);
+        } catch (ServiceUnavailable $e) {
+            self::assertSame(Source::Adis, $e->source);
+            self::assertSame('soapenv:Server', $e->errorCode);
+            self::assertStringContainsString('500', $e->getMessage());
+            self::assertStringNotContainsString('SENTINEL-FAULT-STRING', $e->getMessage());
 
-        $client->findMany(['CZ45274649']);
+            return;
+        }
+
+        self::fail('Expected ServiceUnavailable was not thrown.');
+    }
+
+    public function testSoapFaultWithAnotherHttpErrorStatusKeepsTheFaultCode(): void
+    {
+        $client = new VatRegisterClient(new MockHttpClient(self::xml('soap-fault.xml', 503)));
+
+        try {
+            $client->find('CZ45274649');
+        } catch (ServiceUnavailable $e) {
+            self::assertSame('soapenv:Server', $e->errorCode);
+            self::assertStringContainsString('503', $e->getMessage());
+
+            return;
+        }
+
+        self::fail('Expected ServiceUnavailable was not thrown.');
+    }
+
+    public function testUnreliablePayersSoapFaultWithHttpErrorKeepsTheFaultCode(): void
+    {
+        $client = new VatRegisterClient(new MockHttpClient(self::xml('soap-fault.xml', 500)));
+
+        try {
+            $client->unreliablePayers();
+        } catch (ServiceUnavailable $e) {
+            self::assertSame(Source::Adis, $e->source);
+            self::assertSame('soapenv:Server', $e->errorCode);
+            self::assertStringNotContainsString('SENTINEL-FAULT-STRING', $e->getMessage());
+
+            return;
+        }
+
+        self::fail('Expected ServiceUnavailable was not thrown.');
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function provideHttpErrorBodiesWithoutAFault(): iterable
+    {
+        yield 'plain text' => ['SENTINEL-BODY'];
+        yield 'html page' => ['<html><body>SENTINEL-BODY</body></html>'];
+        yield 'empty' => [''];
+        yield 'truncated envelope' => ['<?xml version="1.0" encoding="utf-8"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"><soapenv:Body><soapenv:Fault><faultcode>soapenv:Ser'];
+        yield 'soap envelope without a fault' => ['<?xml version="1.0" encoding="utf-8"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"><soapenv:Body><note>SENTINEL-BODY</note></soapenv:Body></soapenv:Envelope>'];
+        yield 'fault without a fault code' => ['<?xml version="1.0" encoding="utf-8"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"><soapenv:Body><soapenv:Fault><faultstring>SENTINEL-BODY</faultstring></soapenv:Fault></soapenv:Body></soapenv:Envelope>'];
+    }
+
+    #[DataProvider('provideHttpErrorBodiesWithoutAFault')]
+    public function testHttpErrorWhoseBodyCarriesNoFaultCodeIsServiceUnavailableWithoutAnErrorCode(string $body): void
+    {
+        $client = new VatRegisterClient(new MockHttpClient(new MockResponse($body, ['http_code' => 500])));
+
+        try {
+            $client->find('CZ45274649');
+        } catch (ServiceUnavailable $e) {
+            self::assertSame(Source::Adis, $e->source);
+            self::assertNull($e->errorCode);
+            self::assertStringContainsString('500', $e->getMessage());
+            self::assertStringNotContainsString('SENTINEL-BODY', $e->getMessage());
+
+            return;
+        }
+
+        self::fail('Expected ServiceUnavailable was not thrown.');
+    }
+
+    public function testHttpErrorWithAnAnswerBodyIsServiceUnavailableWithoutAnErrorCode(): void
+    {
+        $client = new VatRegisterClient(new MockHttpClient(self::xml('status-not-found.xml', 500)));
+
+        try {
+            $client->find('CZ45274649');
+        } catch (ServiceUnavailable $e) {
+            self::assertNull($e->errorCode);
+            self::assertStringContainsString('500', $e->getMessage());
+
+            return;
+        }
+
+        self::fail('Expected ServiceUnavailable was not thrown.');
+    }
+
+    public function testFaultCodeThatIsFreeTextNeverReachesTheMessage(): void
+    {
+        $body = '<?xml version="1.0" encoding="utf-8"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"><soapenv:Body><soapenv:Fault><faultcode>SENTINEL FAULT TEXT</faultcode><faultstring>x</faultstring></soapenv:Fault></soapenv:Body></soapenv:Envelope>';
+        $client = new VatRegisterClient(new MockHttpClient(new MockResponse($body, ['http_code' => 500])));
+
+        try {
+            $client->find('CZ45274649');
+        } catch (ServiceUnavailable $e) {
+            self::assertStringContainsString('500', $e->getMessage());
+            self::assertStringNotContainsString('SENTINEL', $e->getMessage());
+
+            return;
+        }
+
+        self::fail('Expected ServiceUnavailable was not thrown.');
     }
 
     public function testSoapFaultWithHttpOkIsServiceUnavailableCarryingTheFaultCode(): void

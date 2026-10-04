@@ -324,6 +324,46 @@ final class ResponseParserTest extends TestCase
         self::assertStringNotContainsString('SENTINEL-FAULT-STRING', $error->getMessage());
     }
 
+    // --- fault code of an error response ---
+
+    public function testFaultCodeIsReadFromARealFaultEnvelopeWithAnEmptyHeader(): void
+    {
+        self::assertSame('soapenv:Server', ResponseParser::faultCode(FixtureLoader::read('Adis/soap-fault.xml')));
+    }
+
+    public function testFaultCodeIsReadWhateverPrefixTheEnvelopeNamespaceUses(): void
+    {
+        $xml = '<env:Envelope xmlns:env="http://schemas.xmlsoap.org/soap/envelope/"><env:Body><env:Fault><faultcode>env:Client</faultcode><faultstring>x</faultstring></env:Fault></env:Body></env:Envelope>';
+
+        self::assertSame('env:Client', ResponseParser::faultCode($xml));
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function provideBodiesWithoutAFaultCode(): iterable
+    {
+        yield 'empty' => [''];
+        yield 'plain text' => ['Internal Server Error'];
+        yield 'html page' => ['<html><body><h1>500</h1></body></html>'];
+        yield 'truncated envelope' => ['<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"><soapenv:Body><soapenv:Fault><faultcode>soapenv:Ser'];
+        yield 'envelope without a body' => ['<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"><soapenv:Header/></soapenv:Envelope>'];
+        yield 'body without a fault' => ['<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"><soapenv:Body/></soapenv:Envelope>'];
+        yield 'fault without a fault code' => ['<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"><soapenv:Body><soapenv:Fault><faultstring>x</faultstring></soapenv:Fault></soapenv:Body></soapenv:Envelope>'];
+        yield 'fault with an empty fault code' => ['<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"><soapenv:Body><soapenv:Fault><faultcode/></soapenv:Fault></soapenv:Body></soapenv:Envelope>'];
+    }
+
+    #[DataProvider('provideBodiesWithoutAFaultCode')]
+    public function testFaultCodeIsNullWhenTheBodyHasNoUsableFault(string $xml): void
+    {
+        self::assertNull(ResponseParser::faultCode($xml));
+    }
+
+    public function testFaultCodeIsNullForAnOrdinaryAnswer(): void
+    {
+        self::assertNull(ResponseParser::faultCode(FixtureLoader::read('Adis/status-mixed.xml')));
+    }
+
     // --- invalid responses ---
 
     public function testUnknownSubjectTypeIsAnInvalidResponseWithoutTheUnknownValue(): void

@@ -1,0 +1,16 @@
+{
+  "countryCode" : "ES",
+  "vatNumber" : "A15075062",
+  "requestDate" : "2026-10-04T15:35:00.788Z",
+  "valid" : true,
+  "requestIdentifier" : "",
+  "name" : "---",
+  "address" : "---",
+  "traderName" : "EXAMPLE TRADING, S.L.",
+  "traderCity" : "MADRID",
+  "traderNameMatch" : "INVALID",
+  "traderStreetMatch" : "NOT_PROCESSED",
+  "traderPostalCodeMatch" : "NOT_PROCESSED",
+  "traderCityMatch" : "INVALID",
+  "traderCompanyTypeMatch" : "NOT_PROCESSED"
+}

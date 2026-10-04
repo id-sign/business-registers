@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace IdSign\BusinessRegisters\Adis;
 
 use IdSign\BusinessRegisters\Exception\InvalidInput;
+use IdSign\BusinessRegisters\Internal\Identifiers;
 use IdSign\BusinessRegisters\Internal\ListElement;
 use IdSign\BusinessRegisters\VatId;
 
@@ -45,7 +46,7 @@ final readonly class VatSubjects implements \IteratorAggregate, \Countable
      */
     public function get(VatId|string $vatId): ?VatSubject
     {
-        return $this->byVatId[(string) self::key($vatId)] ?? null;
+        return $this->byVatId[(string) Identifiers::czechVatId($vatId)] ?? null;
     }
 
     /**
@@ -53,7 +54,7 @@ final readonly class VatSubjects implements \IteratorAggregate, \Countable
      */
     public function has(VatId|string $vatId): bool
     {
-        return isset($this->byVatId[(string) self::key($vatId)]);
+        return isset($this->byVatId[(string) Identifiers::czechVatId($vatId)]);
     }
 
     /**
@@ -69,7 +70,7 @@ final readonly class VatSubjects implements \IteratorAggregate, \Countable
     {
         $missing = [];
         foreach ($requested as $index => $vatId) {
-            $key = self::key(ListElement::idOrString($vatId, $index, VatId::class));
+            $key = Identifiers::czechVatId(ListElement::idOrString($vatId, $index, VatId::class));
             if (!isset($this->byVatId[(string) $key])) {
                 $missing[(string) $key] ??= $key;
             }
@@ -97,18 +98,5 @@ final readonly class VatSubjects implements \IteratorAggregate, \Countable
     public function count(): int
     {
         return \count($this->byVatId);
-    }
-
-    /**
-     * @throws InvalidInput
-     */
-    private static function key(VatId|string $vatId): VatId
-    {
-        $vatId = $vatId instanceof VatId ? $vatId : VatId::parse($vatId, 'CZ');
-        if (!$vatId->isCzech()) {
-            throw new InvalidInput(\sprintf('VAT id %s is not Czech; the VAT register holds Czech VAT ids only.', $vatId));
-        }
-
-        return $vatId;
     }
 }

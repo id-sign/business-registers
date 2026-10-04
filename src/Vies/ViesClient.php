@@ -7,10 +7,10 @@ namespace IdSign\BusinessRegisters\Vies;
 use IdSign\BusinessRegisters\Exception\InvalidInput;
 use IdSign\BusinessRegisters\Exception\InvalidResponse;
 use IdSign\BusinessRegisters\Exception\ServiceUnavailable;
+use IdSign\BusinessRegisters\Internal\HttpTransport;
 use IdSign\BusinessRegisters\Internal\JsonReader;
 use IdSign\BusinessRegisters\Source;
 use IdSign\BusinessRegisters\VatId;
-use Symfony\Contracts\HttpClient\Exception\TransportExceptionInterface;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 
 /**
@@ -23,17 +23,20 @@ final readonly class ViesClient implements Vies
     private const array INPUT_ERROR_CODES = ['INVALID_INPUT', 'INVALID_REQUESTER_INFO'];
     private const string UNDISCLOSED = '---';
 
+    private HttpTransport $transport;
+
     /**
      * @param float $timeout seconds, applied as both the idle timeout and the maximum duration
      */
     public function __construct(
-        private HttpClientInterface $httpClient,
+        HttpClientInterface $httpClient,
         private string $endpoint = self::ENDPOINT,
-        private float $timeout = 10.0,
+        float $timeout = 10.0,
     ) {
+        $this->transport = new HttpTransport($httpClient, Source::Vies, $timeout);
     }
 
-    public function check(VatId|string $vatId, VatId|string|null $requester = null): ViesResult
+    public function check(VatId|string $vatId, VatId|string|null $requester = null, ?TraderDetails $trader = null): ViesResult
     {
         $vatId = $vatId instanceof VatId ? $vatId : VatId::parse($vatId);
         $requester = \is_string($requester) ? VatId::parse($requester) : $requester;
@@ -43,8 +46,32 @@ final readonly class ViesClient implements Vies
             $body['requesterMemberStateCode'] = $requester->countryCode;
             $body['requesterNumber'] = $requester->number;
         }
+        if (null !== $trader) {
+            $body += array_filter([
+                'traderName' => $trader->name,
+                'traderStreet' => $trader->street,
+                'traderPostalCode' => $trader->postalCode,
+                'traderCity' => $trader->city,
+                'traderCompanyType' => $trader->companyType,
+                // preg_match() returns false on invalid UTF-8, so such a value is kept and fails JSON encoding below.
+            ], static fn (?string $value): bool => null !== $value && 1 !== preg_match('/^[\s\p{Z}]*$/u', $value));
+        }
 
-        [$status, $content] = $this->send(json_encode($body, \JSON_THROW_ON_ERROR), $vatId);
+        try {
+            $json = json_encode($body, \JSON_THROW_ON_ERROR);
+        } catch (\JsonException $e) {
+            throw new InvalidInput(\sprintf('VIES request for VAT id %s cannot be encoded as JSON (invalid UTF-8)', $vatId), previous: $e);
+        }
+
+        [$status, $content] = $this->transport->exchange(
+            'POST',
+            $this->endpoint,
+            [
+                'headers' => ['Content-Type' => 'application/json', 'Accept' => 'application/json'],
+                'body' => $json,
+            ],
+            'VAT id '.$vatId,
+        );
 
         if (400 === $status) {
             throw new InvalidInput(\sprintf('VIES rejected the request for VAT id %s', $vatId), self::errorCode($content));
@@ -59,27 +86,6 @@ final readonly class ViesClient implements Vies
         }
 
         return self::result($reader);
-    }
-
-    /**
-     * @return array{int, string} HTTP status and body
-     *
-     * @throws ServiceUnavailable
-     */
-    private function send(string $json, VatId $vatId): array
-    {
-        try {
-            $response = $this->httpClient->request('POST', $this->endpoint, [
-                'headers' => ['Content-Type' => 'application/json', 'Accept' => 'application/json'],
-                'body' => $json,
-                'timeout' => $this->timeout,
-                'max_duration' => $this->timeout,
-            ]);
-
-            return [$response->getStatusCode(), $response->getContent(false)];
-        } catch (TransportExceptionInterface $e) {
-            throw new ServiceUnavailable(\sprintf('VIES request for VAT id %s failed: %s', $vatId, $e->getMessage()), Source::Vies, previous: $e);
-        }
     }
 
     /**
@@ -111,9 +117,24 @@ final readonly class ViesClient implements Vies
             $valid,
             self::disclosed($reader->optionalString('name')),
             self::disclosed($reader->optionalString('address')),
+            self::match($reader, 'traderNameMatch'),
+            self::match($reader, 'traderStreetMatch'),
+            self::match($reader, 'traderPostalCodeMatch'),
+            self::match($reader, 'traderCityMatch'),
+            self::match($reader, 'traderCompanyTypeMatch'),
             $reader->optionalString('requestIdentifier'),
             $reader->dateTimeUtc('requestDate'),
         );
+    }
+
+    /**
+     * @throws InvalidResponse
+     */
+    private static function match(JsonReader $reader, string $key): ?MatchResult
+    {
+        $value = $reader->optionalString($key);
+
+        return null === $value ? null : MatchResult::tryFrom($value) ?? throw $reader->invalid($key, 'match result');
     }
 
     private static function disclosed(?string $value): ?string

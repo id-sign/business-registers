@@ -14,10 +14,12 @@ use IdSign\BusinessRegisters\Exception\InvalidInput;
 use IdSign\BusinessRegisters\Exception\InvalidResponse;
 use IdSign\BusinessRegisters\Exception\ServiceUnavailable;
 use IdSign\BusinessRegisters\Source;
+use IdSign\BusinessRegisters\Tests\Double\CountingHttpClient;
 use IdSign\BusinessRegisters\Tests\FixtureLoader;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\HttpClient\Exception\TransportException;
 use Symfony\Component\HttpClient\MockHttpClient;
 use Symfony\Component\HttpClient\Response\MockResponse;
 
@@ -74,6 +76,33 @@ final class AresClientBulkTest extends TestCase
         return $ids;
     }
 
+    /**
+     * Answers every request with one subject per requested id.
+     *
+     * @param array<int, array{int, string|\Throwable}> $failures replace the answer, by ordinal of the request
+     */
+    private static function countingClient(array $failures = []): CountingHttpClient
+    {
+        return new CountingHttpClient(static function (int $ordinal, string $method, string $url, array $options) use ($failures): array {
+            if (isset($failures[$ordinal])) {
+                return $failures[$ordinal];
+            }
+
+            $sent = $options['body'] ?? null;
+            if (!\is_string($sent)) {
+                throw new \LogicException('The request body is not a string.');
+            }
+            $request = json_decode($sent, true, 512, \JSON_THROW_ON_ERROR);
+            $requested = \is_array($request) && \is_array($request['ico'] ?? null) ? $request['ico'] : [];
+            $subjects = [];
+            foreach ($requested as $ico) {
+                $subjects[] = ['icoId' => 'ARES_'.(\is_string($ico) ? $ico : ''), 'ico' => $ico, 'obchodniJmeno' => 'Company '.(\is_string($ico) ? $ico : '')];
+            }
+
+            return [200, json_encode(['pocetCelkem' => \count($subjects), 'ekonomickeSubjekty' => $subjects], \JSON_THROW_ON_ERROR)];
+        });
+    }
+
     public function testClientExposesBulkAndSearchThroughTheCompanyDirectoryInterface(): void
     {
         $directory = self::asDirectory(new AresClient(new MockHttpClient(self::json('vyhledat-ico.json'))));
@@ -124,6 +153,33 @@ final class AresClientBulkTest extends TestCase
         self::assertFalse($companies->has('04957423'));
         self::assertSame('Komerční banka, a.s.', $companies->get('45317054')?->name);
         self::assertEquals([CompanyId::parse('04957423')], $companies->missing(['45317054', '04957423']));
+    }
+
+    public function testFindManyReturnsRegisterSubjectsWhoseCompanyIdFailsTheCheckDigit(): void
+    {
+        $response = self::json('vyhledat-check-digit-mismatch.json');
+        $ids = [CompanyId::fromRegister('00123562'), CompanyId::fromRegister('29340042')];
+
+        $companies = new AresClient(new MockHttpClient($response))->findMany($ids);
+
+        self::assertSame(['ico' => ['00123562', '29340042'], 'pocet' => 2, 'start' => 0], $this->sentBody($response));
+        self::assertCount(2, $companies);
+        self::assertTrue($companies->has($ids[0]));
+        self::assertTrue($companies->has($ids[1]));
+        self::assertSame('Praha 10 - Gutovka, příspěvková organizace', $companies->get($ids[1])?->name);
+        self::assertSame([], $companies->missing($ids));
+    }
+
+    public function testFindManyRejectsStringsThatFailTheCheckDigitWithoutAnyRequest(): void
+    {
+        $httpClient = new MockHttpClient(self::json('vyhledat-check-digit-mismatch.json'));
+
+        try {
+            new AresClient($httpClient)->findMany(['00123562', '29340042']);
+            self::fail('Expected InvalidInput was not thrown.');
+        } catch (InvalidInput) {
+            self::assertSame(0, $httpClient->getRequestsCount());
+        }
     }
 
     public function testFindManyWithNoIdsReturnsEmptyCollectionWithoutAnyRequest(): void
@@ -372,6 +428,184 @@ final class AresClientBulkTest extends TestCase
         $client->findMany(['45317054']);
     }
 
+    // --- concurrency ---
+
+    /**
+     * @return list<string|null>
+     */
+    private static function idsOf(Companies $companies): array
+    {
+        return array_map(static fn (Company $company): ?string => $company->id?->value, $companies->all());
+    }
+
+    public function testFindManyHasAtMostTwoBatchesOpenByDefault(): void
+    {
+        $http = self::countingClient();
+        $ids = self::companyIds(250);
+
+        $companies = new AresClient($http)->findMany($ids);
+
+        self::assertSame(2, $http->maxOpen);
+        self::assertSame(3, $http->issued);
+        self::assertSame($ids, self::idsOf($companies));
+    }
+
+    /**
+     * @return iterable<string, array{int, int, int}> concurrency, number of ids, expected peak of open requests
+     */
+    public static function provideConcurrencyShapes(): iterable
+    {
+        yield 'one at a time' => [1, 250, 1];
+        yield 'waves of two' => [2, 250, 2];
+        yield 'waves of three' => [3, 250, 3];
+        yield 'fewer batches than the concurrency' => [4, 250, 3];
+        yield 'waves of four' => [4, 500, 4];
+        yield 'a single batch' => [2, 100, 1];
+    }
+
+    #[DataProvider('provideConcurrencyShapes')]
+    public function testFindManyNeverHasMoreBatchesOpenThanMaxConcurrencyAndKeepsTheSequentialResult(int $concurrency, int $count, int $expectedPeak): void
+    {
+        $http = self::countingClient();
+        $ids = self::companyIds($count);
+
+        $companies = new AresClient($http, maxConcurrency: $concurrency)->findMany($ids);
+
+        self::assertSame($expectedPeak, $http->maxOpen);
+        self::assertSame((int) ceil($count / 100), $http->issued);
+        self::assertSame(0, $http->open);
+        self::assertSame($ids, self::idsOf($companies));
+    }
+
+    /**
+     * @return iterable<string, array{int, int, int}> concurrency, ordinal of the failing batch, expected number of requests
+     */
+    public static function provideFailureWaves(): iterable
+    {
+        yield 'sequential, second batch' => [1, 1, 2];
+        yield 'waves of two, second batch' => [2, 1, 2];
+        yield 'waves of two, first batch of the second wave' => [2, 2, 4];
+        yield 'waves of three, first batch' => [3, 0, 3];
+        yield 'waves of four, second batch' => [4, 1, 4];
+        yield 'waves of four, only batch of the second wave' => [4, 4, 5];
+    }
+
+    #[DataProvider('provideFailureWaves')]
+    public function testFindManyStopsAfterTheWaveWithTheFailingBatchAndThrowsTheFirstFailureInSendingOrder(int $concurrency, int $failingBatch, int $expectedRequests): void
+    {
+        $failures = [];
+        for ($ordinal = $failingBatch + 1; $ordinal < 5; ++$ordinal) {
+            $failures[$ordinal] = [503, '{"subKod":"SYSTEMOVA_CHYBA"}'];
+        }
+        $failures[$failingBatch] = [400, FixtureLoader::read('Ares/error-400-generic.json')];
+        $http = self::countingClient($failures);
+        $client = new AresClient($http, maxConcurrency: $concurrency);
+
+        try {
+            $client->findMany(self::companyIds(450));
+            self::fail('Expected InvalidInput was not thrown.');
+        } catch (InvalidInput $e) {
+            self::assertSame('VSTUP_NEVALIDNI_FORMAT_ICO', $e->errorCode);
+        }
+
+        self::assertSame($expectedRequests, $http->issued);
+    }
+
+    /**
+     * @return iterable<string, array{int, string|\Throwable, class-string<\Throwable>, string|null}> status, body, exception, error code
+     */
+    public static function provideBatchFailures(): iterable
+    {
+        yield 'bad request' => [400, '{"kod":"CHYBA_VSTUPU","subKod":"VSTUP_NEVALIDNI_FORMAT_ICO"}', InvalidInput::class, 'VSTUP_NEVALIDNI_FORMAT_ICO'];
+        yield 'server error' => [503, '{"subKod":"SYSTEMOVA_CHYBA"}', ServiceUnavailable::class, 'SYSTEMOVA_CHYBA'];
+        yield 'body is not json' => [200, 'not json', InvalidResponse::class, null];
+        yield 'transport error' => [200, new TransportException('connection reset'), ServiceUnavailable::class, null];
+    }
+
+    /**
+     * @param class-string<\Throwable> $exception
+     */
+    #[DataProvider('provideBatchFailures')]
+    public function testFindManyFailureOfOneBatchInAWaveThrowsTheSameExceptionAsTheSequentialPath(int $status, string|\Throwable $body, string $exception, ?string $errorCode): void
+    {
+        $failures = [1 => [$status, $body], 2 => [503, '{"subKod":"SYSTEMOVA_CHYBA"}'], 3 => [503, '{"subKod":"SYSTEMOVA_CHYBA"}']];
+        $http = self::countingClient($failures);
+        $client = new AresClient($http, maxConcurrency: 4);
+
+        try {
+            $client->findMany(self::companyIds(450));
+            self::fail('Expected an exception was not thrown.');
+        } catch (InvalidInput|ServiceUnavailable|InvalidResponse $e) {
+            self::assertInstanceOf($exception, $e);
+            if (!$e instanceof InvalidInput) {
+                self::assertSame(Source::Ares, $e->source);
+            }
+            if (!$e instanceof InvalidResponse) {
+                self::assertSame($errorCode, $e->errorCode);
+            }
+        }
+
+        self::assertSame(4, $http->issued);
+    }
+
+    public function testFindManySubjectRepeatedInAnotherBatchIsInvalidResponseFromAres(): void
+    {
+        $page = '{"pocetCelkem":1,"ekonomickeSubjekty":[{"icoId":"ARES_45317054","ico":"45317054","obchodniJmeno":"Repeated"}]}';
+        $client = new AresClient(new MockHttpClient([new MockResponse($page), new MockResponse($page)]), maxConcurrency: 2);
+
+        try {
+            $client->findMany(self::companyIds(101));
+        } catch (InvalidResponse $e) {
+            self::assertSame(Source::Ares, $e->source);
+            self::assertSame('ARES: expected unique company id at ekonomickeSubjekty[0].ico', $e->getMessage());
+
+            return;
+        }
+
+        self::fail('Expected InvalidResponse was not thrown.');
+    }
+
+    /**
+     * @return iterable<string, array{int}>
+     */
+    public static function provideInvalidMaxConcurrency(): iterable
+    {
+        yield 'zero' => [0];
+        yield 'negative' => [-1];
+        yield 'above the limit' => [5];
+        yield 'far above the limit' => [100];
+    }
+
+    #[DataProvider('provideInvalidMaxConcurrency')]
+    public function testMaxConcurrencyOutsideOneToFourIsRejectedByTheConstructor(int $maxConcurrency): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        $client = new AresClient(new MockHttpClient(), maxConcurrency: $maxConcurrency);
+
+        unset($client);
+    }
+
+    /**
+     * @return iterable<string, array{int}>
+     */
+    public static function provideValidMaxConcurrency(): iterable
+    {
+        yield 'one' => [1];
+        yield 'two' => [2];
+        yield 'three' => [3];
+        yield 'four' => [4];
+    }
+
+    #[DataProvider('provideValidMaxConcurrency')]
+    public function testMaxConcurrencyFromOneToFourIsAccepted(int $maxConcurrency): void
+    {
+        $companies = new AresClient(new MockHttpClient(self::json('vyhledat-ico.json')), maxConcurrency: $maxConcurrency)
+            ->findMany(['45317054']);
+
+        self::assertCount(1, $companies);
+    }
+
     public function testSearchPostsToTheSearchEndpointWithJsonHeadersAndTimeout(): void
     {
         $response = self::json('vyhledat-search.json');
@@ -470,6 +704,7 @@ final class AresClientBulkTest extends TestCase
         yield 'limit zero' => [new CompanySearch(name: 'ČEZ', limit: 0)];
         yield 'negative limit' => [new CompanySearch(name: 'ČEZ', limit: -1)];
         yield 'limit above one thousand' => [new CompanySearch(name: 'ČEZ', limit: 1001)];
+        yield 'negative offset' => [new CompanySearch(name: 'ČEZ', offset: -1)];
         yield 'blank name' => [new CompanySearch(name: '   ')];
         yield 'blank name and address' => [new CompanySearch(name: '', address: " \t")];
     }
@@ -512,6 +747,17 @@ final class AresClientBulkTest extends TestCase
         self::assertSame(46, $result->total);
         self::assertCount(3, $result->companies);
         self::assertSame('ČEZ Distribuce, a. s.', $result->companies[1]->name);
+    }
+
+    public function testSearchReturnsEverySubjectOfAPageIncludingOnesWhoseCompanyIdFailsTheCheckDigit(): void
+    {
+        $result = new AresClient(new MockHttpClient(self::json('vyhledat-check-digit-mismatch.json')))
+            ->search(new CompanySearch(name: 'Předměřice'));
+
+        self::assertSame(2, $result->total);
+        self::assertCount(2, $result->companies);
+        self::assertSame('00123562', $result->companies[0]->id?->value);
+        self::assertSame('29340042', $result->companies[1]->id?->value);
     }
 
     public function testSearchReturnsSubjectsWithoutCompanyIdAlongsideOthers(): void

@@ -93,6 +93,21 @@ final class ResponseParser
     }
 
     /**
+     * The `faultcode` of a SOAP Fault body, or null when the body is not a readable Fault carrying one.
+     */
+    public static function faultCode(string $xml): ?string
+    {
+        try {
+            return XmlReader::fromString($xml, Source::Adis, self::NAMESPACES)
+                ->optionalElement('s:Body')
+                ?->optionalElement('s:Fault')
+                ?->optionalString('faultcode');
+        } catch (InvalidResponse) {
+            return null;
+        }
+    }
+
+    /**
      * Checks the envelope and the status, returns the response element and the generation date.
      *
      * @return array{XmlReader, \DateTimeImmutable}

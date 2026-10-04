@@ -2,42 +2,43 @@
 
 declare(strict_types=1);
 
-namespace IdSign\BusinessRegisters\Ares;
+namespace IdSign\BusinessRegisters;
 
-use IdSign\BusinessRegisters\CompanyId;
 use IdSign\BusinessRegisters\Exception\InvalidInput;
 use IdSign\BusinessRegisters\Internal\Identifiers;
 use IdSign\BusinessRegisters\Internal\ListElement;
 
 /**
- * Companies found in ARES, one per company id, in insertion order.
+ * Company profiles assembled by CompanyLookup::byCompanyIds(), one per company id, in insertion order.
  *
  * Not a keyed array because PHP turns digit-only string keys into ints. A string lookup id goes
  * through the strict CompanyId::parse(), so "45 317 054", "64581" and "00064581" find the same entry;
  * a CompanyId is taken as it is, so a register id that fails the check digit is found too.
  * A company id is always a CompanyId or a string, never an int.
  *
- * @implements \IteratorAggregate<int, Company>
+ * @implements \IteratorAggregate<int, CompanyProfile>
  */
-final readonly class Companies implements \IteratorAggregate, \Countable
+final readonly class CompanyProfiles implements \IteratorAggregate, \Countable
 {
-    /** @var array<string, Company> */
+    /** @var array<string, CompanyProfile> */
     private array $byId;
 
     /**
-     * @param list<Company> $companies
+     * Built by CompanyLookup; public so consumers can build collections in their tests.
      *
-     * @throws InvalidInput a company without a company id, or two companies with the same one
+     * @param list<CompanyProfile> $profiles
+     *
+     * @throws InvalidInput a profile whose company has no company id, or two profiles with the same one
      */
-    public function __construct(array $companies)
+    public function __construct(array $profiles)
     {
         $byId = [];
-        foreach ($companies as $company) {
-            $id = $company->id ?? throw new InvalidInput(\sprintf('Company "%s" has no company id (IČO) and cannot be stored in Companies.', $company->aresId));
+        foreach ($profiles as $profile) {
+            $id = $profile->company->id ?? throw new InvalidInput(\sprintf('Company "%s" has no company id (IČO) and cannot be stored in CompanyProfiles.', $profile->company->aresId));
             if (isset($byId[$id->value])) {
-                throw new InvalidInput(\sprintf('Duplicate company id %s in Companies.', $id->value));
+                throw new InvalidInput(\sprintf('Duplicate company id %s in CompanyProfiles.', $id->value));
             }
-            $byId[$id->value] = $company;
+            $byId[$id->value] = $profile;
         }
 
         $this->byId = $byId;
@@ -46,7 +47,7 @@ final readonly class Companies implements \IteratorAggregate, \Countable
     /**
      * @throws InvalidInput an invalid company id
      */
-    public function get(CompanyId|string $id): ?Company
+    public function get(CompanyId|string $id): ?CompanyProfile
     {
         return $this->byId[Identifiers::companyId($id)->value] ?? null;
     }
@@ -82,7 +83,7 @@ final readonly class Companies implements \IteratorAggregate, \Countable
     }
 
     /**
-     * @return list<Company>
+     * @return list<CompanyProfile>
      */
     public function all(): array
     {
@@ -90,7 +91,7 @@ final readonly class Companies implements \IteratorAggregate, \Countable
     }
 
     /**
-     * @return \ArrayIterator<int, Company>
+     * @return \ArrayIterator<int, CompanyProfile>
      */
     public function getIterator(): \ArrayIterator
     {

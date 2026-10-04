@@ -1,0 +1,19 @@
+{
+  "countryCode" : "CZ",
+  "vatNumber" : "45274649",
+  "requestDate" : "2026-10-04T15:35:04.126Z",
+  "valid" : true,
+  "requestIdentifier" : "",
+  "name" : "ČEZ, a. s.",
+  "address" : "Duhová 1444/2\nPRAHA 4 - MICHLE\n140 00  PRAHA 4",
+  "traderName" : "---",
+  "traderStreet" : "---",
+  "traderPostalCode" : "---",
+  "traderCity" : "---",
+  "traderCompanyType" : "---",
+  "traderNameMatch" : "NOT_PROCESSED",
+  "traderStreetMatch" : "NOT_PROCESSED",
+  "traderPostalCodeMatch" : "NOT_PROCESSED",
+  "traderCityMatch" : "NOT_PROCESSED",
+  "traderCompanyTypeMatch" : "NOT_PROCESSED"
+}

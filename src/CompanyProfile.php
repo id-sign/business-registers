@@ -15,10 +15,12 @@ use IdSign\BusinessRegisters\Vies\ViesResult;
 /**
  * Company assembled by CompanyLookup from ARES and the requested sections.
  *
- * A null section property ($vat, $vies) has four meanings; status() tells them apart:
+ * A null section property ($vat, $vies) has five meanings; status() tells them apart:
  * NotRequested (the section was not asked for), NotFound (the source does not hold the subject),
- * NotApplicable (the subject has no VAT id) and Unavailable (the source could not answer; error()
- * holds the exception). Never read a null section as a negative answer without checking status().
+ * NotApplicable (the subject has no VAT id), Unavailable (the source could not answer; ask again
+ * later) and Rejected (the source rejected the request; fix the input or configuration). For the
+ * last two error() holds the exception. Never read a null section as a negative answer without
+ * checking status().
  *
  * flags() are computed from ARES and only from sections whose status is Ok. An absent flag
  * therefore means "clean" only when isComplete() is true and the section the flag comes from
@@ -30,7 +32,7 @@ final readonly class CompanyProfile
      * Built by CompanyLookup; public so consumers can build profiles in their tests.
      *
      * @param array<string, SectionStatus>      $statuses keyed by Section::name; a missing key is NotRequested
-     * @param array<string, ExceptionInterface> $errors   keyed by Section::name, for Unavailable sections
+     * @param array<string, ExceptionInterface> $errors   keyed by Section::name, for Unavailable and Rejected sections
      */
     public function __construct(
         public Company $company,
@@ -47,7 +49,7 @@ final readonly class CompanyProfile
     }
 
     /**
-     * The exception that made the section Unavailable, otherwise null.
+     * The exception that made the section Unavailable or Rejected, otherwise null.
      */
     public function error(Section $section): ?ExceptionInterface
     {
@@ -55,11 +57,12 @@ final readonly class CompanyProfile
     }
 
     /**
-     * True when no requested section is Unavailable.
+     * True when no requested section is Unavailable or Rejected.
      */
     public function isComplete(): bool
     {
-        return !\in_array(SectionStatus::Unavailable, $this->statuses, true);
+        return !\in_array(SectionStatus::Unavailable, $this->statuses, true)
+            && !\in_array(SectionStatus::Rejected, $this->statuses, true);
     }
 
     /**
@@ -72,7 +75,7 @@ final readonly class CompanyProfile
 
     public function hasFlag(RiskFlag $flag): bool
     {
-        return \in_array($flag, $this->flags(), true);
+        return $this->isRaised($flag);
     }
 
     /**
@@ -80,8 +83,8 @@ final readonly class CompanyProfile
      *
      * The answer is tri-state, because a missing answer of the register must not look like "no":
      * true or false is definitive (false also when the register does not hold the subject or the
-     * subject has no VAT id); null means the register could not answer (Section::Vat is Unavailable)
-     * and must never be read as "not a VAT payer" — ask again later.
+     * subject has no VAT id); null means the answer is unknown and must never be read as "not a VAT
+     * payer" — Section::Vat is Unavailable (ask again later) or Rejected (fix the input or configuration).
      *
      * @throws \LogicException Section::Vat was not requested
      */
@@ -97,8 +100,8 @@ final readonly class CompanyProfile
      * VatSubject::hasPublishedAccount() for the accepted forms).
      *
      * The answer is tri-state like isVatPayer(): true or false is definitive (false also when the
-     * register does not hold the subject or the subject has no VAT id); null means the register could
-     * not answer and must never be read as "the account is not published" — ask again later.
+     * register does not hold the subject or the subject has no VAT id); null means the answer is unknown
+     * (Section::Vat is Unavailable or Rejected) and must never be read as "the account is not published".
      *
      * @throws \LogicException Section::Vat was not requested
      */
@@ -117,7 +120,7 @@ final readonly class CompanyProfile
         return match ($this->status(Section::Vat)) {
             SectionStatus::Ok => $this->vat ?? throw new \LogicException('Section Vat is Ok but the profile holds no VAT subject'),
             SectionStatus::NotFound, SectionStatus::NotApplicable => false,
-            SectionStatus::Unavailable => null,
+            SectionStatus::Unavailable, SectionStatus::Rejected => null,
             SectionStatus::NotRequested => throw new \LogicException('Section Vat was not requested; pass Section::Vat to CompanyLookup::byCompanyId()'),
         };
     }
@@ -130,10 +133,12 @@ final readonly class CompanyProfile
 
         return match ($flag) {
             RiskFlag::Dissolved => null !== $this->company->dissolvedOn,
-            // Real ARES names carry the suffix in quotes, with a trailing dot or with extra spaces.
-            RiskFlag::InLiquidation => 1 === preg_match('/v\s+likvidaci["\'\s.]*$/iu', $this->company->name),
+            // The phrase stands anywhere in the name; on each side only the start/end, whitespace, a quote (with ARES's
+            // ´ and ` substitutes), a comma, a dot, a parenthesis, a slash or a dash may touch it, so "vlikvidaci" or
+            // "Kov likvidaci" do not match.
+            RiskFlag::InLiquidation => 1 === preg_match('/(?<![^\s"\'„“”‘’‚‛‟«»‹›´`,.()\/\p{Pd}])v\s+likvidaci(?![^\s"\'„“”‘’‚‛‟«»‹›´`,.()\/\p{Pd}])/iu', $this->company->name),
             RiskFlag::InsolvencyRecord => $registrations->isActive(AresRegister::Insolvency),
-            RiskFlag::UnreliableVatPayer => true === $vat?->unreliable,
+            RiskFlag::UnreliableVatPayer => null !== $vat && $vat->unreliable && $vat->isVatPayer(),
             RiskFlag::UnreliablePerson => SubjectType::UnreliablePerson === $vat?->type,
             RiskFlag::VatRegistrationEnded => \in_array($registrations->status(AresRegister::Vat), [RegistrationStatus::Dissolved, RegistrationStatus::Historical], true)
                 && !$registrations->isActive(AresRegister::VatGroup),

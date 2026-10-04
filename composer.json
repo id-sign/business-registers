@@ -1,9 +1,9 @@
 {
     "name": "id-sign/business-registers",
-    "description": "Typed PHP client for Czech business registers: ARES, VAT register (ADIS), VIES and the insolvency register (ISIR).",
+    "description": "Typed PHP client for Czech business registers: ARES, VAT register (ADIS) and VIES.",
     "type": "library",
     "license": "MIT",
-    "keywords": ["ares", "adis", "vies", "isir", "vat", "dph", "ico", "dic", "czech"],
+    "keywords": ["ares", "adis", "vies", "vat", "dph", "ico", "dic", "czech"],
     "require": {
         "php": ">=8.4",
         "ext-dom": "*",

@@ -9,6 +9,11 @@
   status codes 1–3, `NESPOLEHLIVA_OSOBA`, ended accounts, some VIES error bodies) use hand-made fixtures that keep the
   real envelope and attribute shapes.
 - Leak tests plant a sentinel string in a fixture and assert it never appears in an exception message.
+- Concurrency tests count open requests with `tests/Double/CountingHttpClient`, a `MockHttpClient` whose responses
+  have a generator body: the generator runs on the first read, so `open` (raised when a request is issued, lowered in
+  the generator) is the number of requests issued and not yet read, `maxOpen` its peak and `issued` the requests
+  attempted. A request whose answer closure throws counts as issued but never open. Cancellation is asserted in
+  `HttpTransportTest`, where the test's sender closures keep the responses they issued (`getInfo('canceled')`).
 - Facade tests use stubs of `CompanyDirectory`, `VatRegister` and `Vies`; no HTTP.
 - PHPStan analyses the tests too. Avoid assertions it can prove statically (`assertInstanceOf` on `new X()`, a
   constant against its own literal, enum values with literal arguments): pin contracts through observable behaviour,
@@ -22,6 +27,8 @@
 - Subjects: ČEZ `45274649`, Komerční banka `45317054` (group `CZ699001182`), Praha `00064581`, deleted `04957423`,
   Knihovna J. Mahena `CZ00101494`, LIDRU `CZ00121100`, `CZ11111111`, VIES test service numbers `DE100`–`DE601`
   (passed as `$endpoint`).
+- The live suite stays within the operator limits: no test sends more than one batch, so `maxConcurrency` never
+  applies and requests run sequentially.
 - ADIS is down every night 0:00–0:10; ADIS live tests skip then. A VIES test skips when production VIES throttles;
   re-run.
 

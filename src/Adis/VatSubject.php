@@ -14,6 +14,7 @@ use IdSign\BusinessRegisters\VatId;
 final readonly class VatSubject
 {
     /**
+     * @param bool                $unreliable      raw ADIS nespolehlivyPlatce, also true for an unreliable person (not a VAT payer)
      * @param ?\DateTimeImmutable $unreliableSince date the unreliability was published
      * @param ?string             $taxOfficeCode   three digits, e.g. "013"
      * @param list<BankAccount>   $bankAccounts    all published accounts, including ended ones

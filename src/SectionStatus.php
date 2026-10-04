@@ -25,4 +25,10 @@ enum SectionStatus: string
 
     /** The source could not answer; CompanyProfile::error() holds the exception. The answer is unknown. */
     case Unavailable = 'unavailable';
+
+    /**
+     * The source rejected the request; CompanyProfile::error() holds the exception. Unlike Unavailable,
+     * asking again will not help — the input or the configuration (e.g. the VIES requester) must be fixed.
+     */
+    case Rejected = 'rejected';
 }

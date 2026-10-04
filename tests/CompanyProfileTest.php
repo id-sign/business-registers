@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace IdSign\BusinessRegisters\Tests;
 
 use IdSign\BusinessRegisters\Adis\BankAccount;
+use IdSign\BusinessRegisters\Adis\Internal\ResponseParser;
 use IdSign\BusinessRegisters\Adis\SubjectType;
 use IdSign\BusinessRegisters\Adis\VatSubject;
 use IdSign\BusinessRegisters\Ares\AresRegister;
@@ -12,6 +13,7 @@ use IdSign\BusinessRegisters\Ares\Company;
 use IdSign\BusinessRegisters\Ares\RegistrationStatus;
 use IdSign\BusinessRegisters\CompanyProfile;
 use IdSign\BusinessRegisters\Exception\ExceptionInterface;
+use IdSign\BusinessRegisters\Exception\InvalidInput;
 use IdSign\BusinessRegisters\Exception\ServiceUnavailable;
 use IdSign\BusinessRegisters\RiskFlag;
 use IdSign\BusinessRegisters\Section;
@@ -86,6 +88,11 @@ final class CompanyProfileTest extends TestCase
             valid: $valid,
             name: $valid ? 'Test a.s.' : null,
             address: null,
+            nameMatch: null,
+            streetMatch: null,
+            postalCodeMatch: null,
+            cityMatch: null,
+            companyTypeMatch: null,
             consultationNumber: null,
             checkedAt: new \DateTimeImmutable('2026-10-03T10:00:00Z'),
         );
@@ -108,7 +115,7 @@ final class CompanyProfileTest extends TestCase
     {
         self::assertSame(['Vat', 'Vies'], self::caseNames(Section::class));
         self::assertSame(
-            ['NotRequested', 'Ok', 'NotFound', 'NotApplicable', 'Unavailable'],
+            ['NotRequested', 'Ok', 'NotFound', 'NotApplicable', 'Unavailable', 'Rejected'],
             self::caseNames(SectionStatus::class),
         );
         self::assertSame(
@@ -149,6 +156,7 @@ final class CompanyProfileTest extends TestCase
         yield 'NotFound' => ['not_found', 'NotFound'];
         yield 'NotApplicable' => ['not_applicable', 'NotApplicable'];
         yield 'Unavailable' => ['unavailable', 'Unavailable'];
+        yield 'Rejected' => ['rejected', 'Rejected'];
     }
 
     #[DataProvider('provideSectionStatusValues')]
@@ -237,6 +245,35 @@ final class CompanyProfileTest extends TestCase
         self::assertFalse($profile->isComplete());
     }
 
+    public function testProfileIsIncompleteWhenAnySectionIsRejected(): void
+    {
+        $profile = self::profile(statuses: [
+            Section::Vat->name => SectionStatus::Ok,
+            Section::Vies->name => SectionStatus::Rejected,
+        ]);
+
+        self::assertFalse($profile->isComplete());
+    }
+
+    public function testErrorReturnsTheStoredExceptionOfARejectedSection(): void
+    {
+        $exception = new InvalidInput('VIES rejected the request', 'INVALID_REQUESTER_INFO');
+        $profile = self::profile(
+            statuses: [Section::Vies->name => SectionStatus::Rejected],
+            errors: [Section::Vies->name => $exception],
+        );
+
+        self::assertSame($exception, $profile->error(Section::Vies));
+        self::assertNull($profile->error(Section::Vat));
+    }
+
+    public function testProfileWithARejectedSectionIsJsonEncodableAndCarriesTheStatusValue(): void
+    {
+        $profile = self::profile(statuses: [Section::Vies->name => SectionStatus::Rejected]);
+
+        self::assertStringContainsString('"rejected"', json_encode($profile, \JSON_THROW_ON_ERROR));
+    }
+
     public function testProfileWithoutRiskHasNoFlags(): void
     {
         $profile = self::profile(vat: self::subject(accounts: [self::account()]), vies: self::viesResult(true), statuses: [
@@ -276,16 +313,61 @@ final class CompanyProfileTest extends TestCase
         yield 'comma before the suffix and trailing dot' => ['Test, s.r.o., v likvidaci.', true];
         yield 'two spaces between the words' => ['Test s.r.o. v  likvidaci', true];
         yield 'no-break space between the words' => ["Test s.r.o. v\u{00A0}likvidaci", true];
-        yield 'phrase before the legal form' => ['Test Business v likvidaci, s.r.o.', false];
+        yield 'phrase before the legal form' => ['Test Business v likvidaci, s.r.o.', true];
+        yield 'phrase in the middle only' => ['Test v likvidaci s.r.o.', true];
+        yield 'phrase between dashes' => ['Služby města Kralovic - v likvidaci -', true];
+        yield 'phrase between slashes' => ['POSEIDON CLUB občanské sdružení /v likvidaci/', true];
+        yield 'phrase in parentheses' => ['Firma (v likvidaci) a.s.', true];
+        yield 'quoted phrase followed by a dot' => ['Firma "v likvidaci".', true];
+        yield 'czech single quotes' => ["Firma \u{201A}v likvidaci\u{2018} s.r.o.", true];
+        yield 'guillemets pointing outwards' => ["Firma \u{00BB}v likvidaci\u{00AB} s.r.o.", true];
+        yield 'guillemets pointing inwards' => ["Firma \u{00AB}v likvidaci\u{00BB} s.r.o.", true];
+        yield 'single angle quotes' => ["Firma \u{203A}v likvidaci\u{2039} s.r.o.", true];
+        yield 'reversed double high quote' => ["Firma \u{201F}v likvidaci\u{201D} s.r.o.", true];
+        yield 'reversed single high quote' => ["Firma \u{201B}v likvidaci\u{2019} s.r.o.", true];
+        yield 'ares double comma and acute accent quotes' => ["Firma ,,v likvidaci\u{00B4}\u{00B4}", true];
+        yield 'backtick quoted phrase' => ['Firma `v likvidaci` s.r.o.', true];
+        yield 'acute accent right after the phrase' => ["Firma v likvidaci\u{00B4}", true];
+        yield 'acute accent right before the phrase' => ["Firma \u{00B4}v likvidaci", true];
+        yield 'backtick right after the phrase' => ['Firma v likvidaci`', true];
+        yield 'backtick right before the phrase' => ['Firma `v likvidaci', true];
+        yield 'phrase after a dash at the end' => ['Zemědělské družstvo Předměřice nad Labem - v likvidaci', true];
+        yield 'phrase followed by an abbreviated legal form' => ['MTH ALARIS SPORT CLUB o.s., v likvidaci o.s.', true];
+        yield 'phrase followed by an abbreviated legal form with a space' => ['Bublinky - v likvidaci z. s.', true];
+        yield 'phrase followed by a comma and a trailing text' => [
+            'STAVOMONT Liberec akciová společnost, v likvidaci,      jazykovémutace uvedeny níže',
+            true,
+        ];
+        yield 'phrase followed by a parenthesised abbreviation' => [
+            'Lánovská akciová společnost potravinářská, v likvidaci  (ve zkratce: LASPO a.s. v likvidaci)',
+            true,
+        ];
+        yield 'phrase followed by a comma and a legal form word' => ['Nájemní družstvo Nýřany - v likvidaci, družstvo', true];
+        yield 'comma terminated, v.o.s.' => ['KAFKA v.o.s., v likvidaci,', true];
+        yield 'comma terminated, z.s.' => ['TJ SPV Výšina Havlíčkův Brod, z.s. v likvidaci,', true];
+        yield 'comma terminated, s.r.o. with a comma' => ['Pivovar Janáček, s.r.o., v likvidaci,', true];
+        yield 'comma terminated, with a dash in the name' => ['Finanční servis - 02, spol. s r.o., v likvidaci,', true];
+        yield 'comma terminated, hyphenated name' => ['BAU-IMPEX, s.r.o., v likvidaci,', true];
+        yield 'comma terminated, name starting with a digit' => ['4life.cz s.r.o., v likvidaci,', true];
+        yield 'comma terminated, upper case name' => ['SANTA FE COUNTRY s.r.o., v likvidaci,', true];
+        yield 'comma terminated, holding' => ['JTJ Holding s.r.o., v likvidaci,', true];
+        yield 'comma terminated, spaced letters' => ['U N I M A P spol. s r.o., v likvidaci,', true];
+        yield 'comma terminated, dotted initials' => ['R.K.M. s.r.o., v likvidaci,', true];
+        yield 'phrase alone' => ['v likvidaci', true];
         yield 'word containing the stem elsewhere' => ['Likvidaci servis s.r.o.', false];
         yield 'words glued together' => ['Test s.r.o. vlikvidaci', false];
-        yield 'phrase in the middle only' => ['Test v likvidaci s.r.o.', false];
         yield 'similar word' => ['Likvidace s.r.o.', false];
+        yield 'liquidation in the instrumental case' => ['SK RELAX SPORT s likvidací', false];
+        yield 'letter between the words' => ['Lewis Robinson v l likvidaci', false];
+        yield 'preposition ending a longer word' => ['Kov likvidaci s.r.o.', false];
+        yield 'preposition glued to the preceding place name' => ['Horní Podlužív likvidaci', false];
+        yield 'stem without the preposition' => ['Správa likvidaci s.r.o.', false];
+        yield 'name ending in v.o.s.' => ['HD elektro v.o.s.', false];
         yield 'plain name' => ['Test s.r.o.', false];
     }
 
     #[DataProvider('provideLiquidationNames')]
-    public function testInLiquidationFlagFollowsTheNameSuffix(string $name, bool $expected): void
+    public function testInLiquidationFlagFollowsThePhraseInTheName(string $name, bool $expected): void
     {
         $profile = self::profile(CompanyFactory::create(name: $name));
 
@@ -317,6 +399,30 @@ final class CompanyProfileTest extends TestCase
         $profile = self::profile(vat: self::subject(accounts: [self::account()], unreliable: true), statuses: self::vatOk());
 
         self::assertSame([RiskFlag::UnreliableVatPayer], $profile->flags());
+    }
+
+    public function testUnreliableVatPayerFlagIsRaisedForAnUnreliableVatGroup(): void
+    {
+        $profile = self::profile(vat: self::subject(SubjectType::VatGroup, [self::account()], unreliable: true), statuses: self::vatOk());
+
+        self::assertTrue($profile->hasFlag(RiskFlag::UnreliableVatPayer));
+    }
+
+    public function testUnreliablePersonFromTheRegisterIsNotFlaggedAsAnUnreliableVatPayer(): void
+    {
+        $subjects = ResponseParser::parseSubjects(FixtureLoader::read('Adis/status-unreliable-person.xml'));
+        self::assertCount(1, $subjects);
+        $profile = self::profile(vat: $subjects[0], statuses: self::vatOk());
+
+        self::assertTrue($subjects[0]->unreliable);
+        self::assertSame([RiskFlag::UnreliablePerson], $profile->flags());
+    }
+
+    public function testUnreliableVatPayerFlagIsNotRaisedForAnUnreliableSubjectThatIsNotAPayer(): void
+    {
+        $profile = self::profile(vat: self::subject(SubjectType::IdentifiedPerson, unreliable: true), statuses: self::vatOk());
+
+        self::assertFalse($profile->hasFlag(RiskFlag::UnreliableVatPayer));
     }
 
     public function testUnreliableVatPayerFlagIsNotRaisedForAReliablePayer(): void
@@ -437,6 +543,7 @@ final class CompanyProfileTest extends TestCase
     public static function provideStatusesOfSectionsThatAreNotOk(): iterable
     {
         yield 'unavailable' => [SectionStatus::Unavailable];
+        yield 'rejected' => [SectionStatus::Rejected];
         yield 'not requested' => [SectionStatus::NotRequested];
     }
 
@@ -561,6 +668,26 @@ final class CompanyProfileTest extends TestCase
         $profile = self::profile(
             statuses: [Section::Vat->name => SectionStatus::Unavailable],
             errors: [Section::Vat->name => self::unavailable()],
+        );
+
+        self::assertNull($profile->hasPublishedAccount('71504011/0100'));
+    }
+
+    public function testIsVatPayerIsUnknownWhenTheVatSectionIsRejected(): void
+    {
+        $profile = self::profile(
+            statuses: [Section::Vat->name => SectionStatus::Rejected],
+            errors: [Section::Vat->name => new InvalidInput('Only Czech VAT ids are accepted')],
+        );
+
+        self::assertNull($profile->isVatPayer());
+    }
+
+    public function testHasPublishedAccountIsUnknownWhenTheVatSectionIsRejected(): void
+    {
+        $profile = self::profile(
+            statuses: [Section::Vat->name => SectionStatus::Rejected],
+            errors: [Section::Vat->name => new InvalidInput('Only Czech VAT ids are accepted')],
         );
 
         self::assertNull($profile->hasPublishedAccount('71504011/0100'));

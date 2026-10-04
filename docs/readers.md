@@ -35,6 +35,14 @@
 `VatId` or a string passes, anything else is an `InvalidInput` naming the index or key. It takes `mixed` on purpose:
 PHPStan treats the PHPDoc list type as certain and would report an `is_string()` check as always true.
 
+## Identifiers
+
+The one place for the two id rules of `Ares\AresClient`, `Ares\Companies`, `Adis\VatRegisterClient` and
+`Adis\VatSubjects`. `Identifiers::companyId()` parses a string strictly through `CompanyId::parse()` and takes a
+`CompanyId` as it is, so a register id built with `CompanyId::fromRegister()` passes even when it fails the check
+digit. `Identifiers::czechVatId()` parses a string with `CZ` as the default country and rejects a non-Czech VAT id,
+string or `VatId`, with an `InvalidInput`.
+
 ## Account numbers
 
 `Adis\Internal\BankAccountNumber` normalises both sides of an account comparison: all whitespace including Unicode

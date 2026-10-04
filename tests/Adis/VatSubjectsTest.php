@@ -146,6 +146,27 @@ final class VatSubjectsTest extends TestCase
         self::subjects()->missing(['CZ45274649', $vatId]);
     }
 
+    public function testLookupRejectsAForeignVatIdGivenAsAnObjectToo(): void
+    {
+        $subjects = self::subjects();
+        $foreign = VatId::parse('DE811115368');
+
+        $rejected = 0;
+        foreach ([
+            static fn () => $subjects->get($foreign),
+            static fn () => $subjects->has($foreign),
+            static fn () => $subjects->missing([$foreign]),
+        ] as $lookup) {
+            try {
+                $lookup();
+            } catch (InvalidInput) {
+                ++$rejected;
+            }
+        }
+
+        self::assertSame(3, $rejected);
+    }
+
     public function testMissingReturnsNormalisedDistinctVatIdsInRequestOrder(): void
     {
         $missing = self::subjects()->missing(['CZ45274649', '11111111', 'CZ11111111', 'cz 22222222', '00121100']);

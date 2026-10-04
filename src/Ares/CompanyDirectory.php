@@ -24,7 +24,8 @@ interface CompanyDirectory
     public function find(CompanyId|string $id): ?Company;
 
     /**
-     * Duplicates are removed and the ids are sent in batches of 100; an empty list makes no request.
+     * Duplicates are removed and the ids are sent in batches of 100; an empty list makes no request. Batches
+     * may be sent concurrently, up to the client's `maxConcurrency`; the result order is the sequential order.
      * Returns a collection rather than an array keyed by company id, because PHP casts digit-only keys
      * to int; its has()/get()/missing() normalise any id form. A company id is always a string, never an int.
      *
@@ -40,8 +41,9 @@ interface CompanyDirectory
     public function findMany(array $ids): Companies;
 
     /**
-     * @throws InvalidInput       no criterion filled or limit outside 1–1 000 (before any request), or ARES
-     *                            rejected the request, e.g. VYSTUP_PRILIS_MNOHO_VYSLEDKU above 1 000 results
+     * @throws InvalidInput       no criterion filled, limit outside 1–1 000 or a negative offset (before any
+     *                            request), or ARES rejected the request, e.g. VYSTUP_PRILIS_MNOHO_VYSLEDKU above
+     *                            1 000 results
      * @throws ServiceUnavailable
      * @throws InvalidResponse
      */

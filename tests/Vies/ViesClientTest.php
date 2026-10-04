@@ -10,6 +10,8 @@ use IdSign\BusinessRegisters\Exception\ServiceUnavailable;
 use IdSign\BusinessRegisters\Source;
 use IdSign\BusinessRegisters\Tests\FixtureLoader;
 use IdSign\BusinessRegisters\VatId;
+use IdSign\BusinessRegisters\Vies\MatchResult;
+use IdSign\BusinessRegisters\Vies\TraderDetails;
 use IdSign\BusinessRegisters\Vies\Vies;
 use IdSign\BusinessRegisters\Vies\ViesClient;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -173,6 +175,149 @@ final class ViesClientTest extends TestCase
         self::assertSame(['countryCode' => 'CZ', 'vatNumber' => '45274649'], self::sentBody($response));
     }
 
+    public function testBodyCarriesEveryTraderFieldUnderItsViesKey(): void
+    {
+        $response = self::json('valid-es-trader-match.json');
+        $trader = new TraderDetails(
+            name: 'Industria de Diseño Textil, S.A.',
+            street: 'Avenida de la Diputación',
+            postalCode: '15142',
+            city: 'Arteixo',
+            companyType: 'SA',
+        );
+
+        self::asVies(self::client($response))->check('ESA15075062', null, $trader);
+
+        self::assertSame(
+            [
+                'countryCode' => 'ES',
+                'vatNumber' => 'A15075062',
+                'traderName' => 'Industria de Diseño Textil, S.A.',
+                'traderStreet' => 'Avenida de la Diputación',
+                'traderPostalCode' => '15142',
+                'traderCity' => 'Arteixo',
+                'traderCompanyType' => 'SA',
+            ],
+            self::sentBody($response),
+        );
+    }
+
+    public function testBodyCarriesOnlyTheTraderFieldsThatWereGiven(): void
+    {
+        $response = self::json('valid-es-trader-match.json');
+
+        self::client($response)->check('ESA15075062', trader: new TraderDetails(name: 'Industria de Diseño Textil, S.A.', city: 'Arteixo'));
+
+        self::assertSame(
+            ['countryCode' => 'ES', 'vatNumber' => 'A15075062', 'traderName' => 'Industria de Diseño Textil, S.A.', 'traderCity' => 'Arteixo'],
+            self::sentBody($response),
+        );
+    }
+
+    public function testTraderWithoutAnyFieldLeavesTheBodyByteIdenticalToACheckWithoutTrader(): void
+    {
+        $response = self::json('valid-cez.json');
+
+        self::client($response)->check('CZ45274649', trader: new TraderDetails());
+
+        self::assertSame('{"countryCode":"CZ","vatNumber":"45274649"}', $response->getRequestOptions()['body']);
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function provideBlankTraderValues(): iterable
+    {
+        yield 'empty string' => [''];
+        yield 'spaces' => ['   '];
+        yield 'tab' => ["\t"];
+        yield 'newline' => ["\n"];
+        yield 'mixed ASCII whitespace' => [" \r\n\t "];
+        yield 'no-break space' => ["\u{00A0}"];
+    }
+
+    #[DataProvider('provideBlankTraderValues')]
+    public function testTraderWithOnlyBlankFieldsLeavesTheBodyByteIdenticalToACheckWithoutTrader(string $blank): void
+    {
+        $response = self::json('valid-cez.json');
+
+        self::client($response)->check('CZ45274649', trader: new TraderDetails($blank, $blank, $blank, $blank, $blank));
+
+        self::assertSame('{"countryCode":"CZ","vatNumber":"45274649"}', $response->getRequestOptions()['body']);
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function provideTraderFieldNames(): iterable
+    {
+        yield 'name' => ['name'];
+        yield 'street' => ['street'];
+        yield 'postal code' => ['postalCode'];
+        yield 'city' => ['city'];
+        yield 'company type' => ['companyType'];
+    }
+
+    #[DataProvider('provideTraderFieldNames')]
+    public function testBlankTraderFieldIsLeftOutWhileTheOtherFieldsAreSent(string $blankField): void
+    {
+        $response = self::json('valid-es-trader-match.json');
+        $given = [
+            'name' => 'Industria de Diseño Textil, S.A.',
+            'street' => 'Avenida de la Diputación',
+            'postalCode' => '15142',
+            'city' => 'Arteixo',
+            'companyType' => 'SA',
+        ];
+        $viesKeys = [
+            'name' => 'traderName',
+            'street' => 'traderStreet',
+            'postalCode' => 'traderPostalCode',
+            'city' => 'traderCity',
+            'companyType' => 'traderCompanyType',
+        ];
+        $expected = ['countryCode' => 'ES', 'vatNumber' => 'A15075062'];
+        foreach ($given as $field => $value) {
+            if ($field !== $blankField) {
+                $expected[$viesKeys[$field]] = $value;
+            }
+        }
+
+        self::client($response)->check('ESA15075062', trader: new TraderDetails(...[...$given, $blankField => " \t "]));
+
+        self::assertSame($expected, self::sentBody($response));
+    }
+
+    public function testNonEmptyTraderValuesAreSentUnchangedWithoutTrimming(): void
+    {
+        $response = self::json('valid-es-trader-match.json');
+
+        self::client($response)->check('ESA15075062', trader: new TraderDetails(name: '  Industria  de Diseño ', city: "\tArteixo\n"));
+
+        self::assertSame(
+            ['countryCode' => 'ES', 'vatNumber' => 'A15075062', 'traderName' => '  Industria  de Diseño ', 'traderCity' => "\tArteixo\n"],
+            self::sentBody($response),
+        );
+    }
+
+    public function testBodyCarriesTheTraderTogetherWithTheRequester(): void
+    {
+        $response = self::json('valid-es-trader-match.json');
+
+        self::client($response)->check('ESA15075062', 'CZ45274649', new TraderDetails(name: 'Industria de Diseño Textil, S.A.'));
+
+        self::assertSame(
+            [
+                'countryCode' => 'ES',
+                'vatNumber' => 'A15075062',
+                'requesterMemberStateCode' => 'CZ',
+                'requesterNumber' => '45274649',
+                'traderName' => 'Industria de Diseño Textil, S.A.',
+            ],
+            self::sentBody($response),
+        );
+    }
+
     /**
      * @return iterable<string, array{string, string|null}>
      */
@@ -193,6 +338,21 @@ final class ViesClientTest extends TestCase
 
         try {
             new ViesClient($http)->check($vatId, $requester);
+        } catch (InvalidInput) {
+            self::assertSame(0, $http->getRequestsCount());
+
+            return;
+        }
+
+        self::fail('Expected InvalidInput was not thrown.');
+    }
+
+    public function testTraderFieldWithInvalidUtf8IsRejectedAsInvalidInputWithoutAnyRequest(): void
+    {
+        $http = new MockHttpClient(self::json('valid-cez.json'));
+
+        try {
+            new ViesClient($http)->check('CZ45274649', null, new TraderDetails(name: "ACME \xC8EZ"));
         } catch (InvalidInput) {
             self::assertSame(0, $http->getRequestsCount());
 
@@ -254,6 +414,123 @@ final class ViesClientTest extends TestCase
         self::assertNull($result->name);
         self::assertNull($result->address);
         self::assertNull($result->consultationNumber);
+    }
+
+    /**
+     * Real production response: ES hides the registered name and address, the trader name and city match.
+     */
+    public function testTraderFieldsThatMatchAreValidAndTheOthersAreNotProcessed(): void
+    {
+        $result = self::client(self::json('valid-es-trader-match.json'))->check('ESA15075062');
+
+        self::assertTrue($result->valid);
+        self::assertNull($result->name);
+        self::assertNull($result->address);
+        self::assertSame(MatchResult::Valid, $result->nameMatch);
+        self::assertSame(MatchResult::NotProcessed, $result->streetMatch);
+        self::assertSame(MatchResult::NotProcessed, $result->postalCodeMatch);
+        self::assertSame(MatchResult::Valid, $result->cityMatch);
+        self::assertSame(MatchResult::NotProcessed, $result->companyTypeMatch);
+    }
+
+    /**
+     * Real production response: the trader name and city given do not match the register.
+     */
+    public function testTraderFieldsThatDoNotMatchAreInvalid(): void
+    {
+        $result = self::client(self::json('valid-es-trader-mismatch.json'))->check('ESA15075062');
+
+        self::assertTrue($result->valid);
+        self::assertSame(MatchResult::Invalid, $result->nameMatch);
+        self::assertSame(MatchResult::NotProcessed, $result->streetMatch);
+        self::assertSame(MatchResult::NotProcessed, $result->postalCodeMatch);
+        self::assertSame(MatchResult::Invalid, $result->cityMatch);
+        self::assertSame(MatchResult::NotProcessed, $result->companyTypeMatch);
+    }
+
+    /**
+     * Real production response: the Czech Republic never performs trader matching.
+     */
+    public function testMemberStateWithoutMatchingAnswersNotProcessedForEveryTraderField(): void
+    {
+        $result = self::client(self::json('valid-cz-trader-not-processed.json'))->check('CZ45274649', trader: new TraderDetails(name: 'ČEZ, a. s.', city: 'Praha'));
+
+        self::assertSame(MatchResult::NotProcessed, $result->nameMatch);
+        self::assertSame(MatchResult::NotProcessed, $result->streetMatch);
+        self::assertSame(MatchResult::NotProcessed, $result->postalCodeMatch);
+        self::assertSame(MatchResult::NotProcessed, $result->cityMatch);
+        self::assertSame(MatchResult::NotProcessed, $result->companyTypeMatch);
+    }
+
+    /**
+     * Real production response captured before the client could send trader details.
+     */
+    public function testWithoutTraderDetailsViesStillAnswersNotProcessedForEveryTraderField(): void
+    {
+        $response = self::json('valid-cez.json');
+
+        $result = self::client($response)->check('CZ45274649');
+
+        self::assertSame(['countryCode' => 'CZ', 'vatNumber' => '45274649'], self::sentBody($response));
+        self::assertSame(MatchResult::NotProcessed, $result->nameMatch);
+        self::assertSame(MatchResult::NotProcessed, $result->streetMatch);
+        self::assertSame(MatchResult::NotProcessed, $result->postalCodeMatch);
+        self::assertSame(MatchResult::NotProcessed, $result->cityMatch);
+        self::assertSame(MatchResult::NotProcessed, $result->companyTypeMatch);
+    }
+
+    public function testMatchResultIsNullForEveryFieldViesOmits(): void
+    {
+        $result = self::client(self::json('valid-de-no-name.json'))->check('DE811115368');
+
+        self::assertSame(MatchResult::NotProcessed, $result->nameMatch);
+        self::assertNull($result->streetMatch);
+        self::assertNull($result->postalCodeMatch);
+        self::assertNull($result->cityMatch);
+        self::assertNull($result->companyTypeMatch);
+    }
+
+    public function testMatchResultsAreNullWhenViesSendsNoMatchFieldAtAll(): void
+    {
+        $data = self::validBodyWith('traderNameMatch', null);
+        unset($data['traderStreetMatch'], $data['traderPostalCodeMatch'], $data['traderCityMatch'], $data['traderCompanyTypeMatch']);
+
+        $result = self::client(self::jsonResponse($data))->check('CZ45274649');
+
+        self::assertTrue($result->valid);
+        foreach (['nameMatch', 'streetMatch', 'postalCodeMatch', 'cityMatch', 'companyTypeMatch'] as $property) {
+            self::assertObjectHasProperty($property, $result);
+        }
+        self::assertNull($result->nameMatch);
+        self::assertNull($result->streetMatch);
+        self::assertNull($result->postalCodeMatch);
+        self::assertNull($result->cityMatch);
+        self::assertNull($result->companyTypeMatch);
+    }
+
+    /**
+     * @return iterable<string, array{string, int}>
+     */
+    public static function provideMatchProperties(): iterable
+    {
+        yield 'name' => ['traderNameMatch', 0];
+        yield 'street' => ['traderStreetMatch', 1];
+        yield 'postal code' => ['traderPostalCodeMatch', 2];
+        yield 'city' => ['traderCityMatch', 3];
+        yield 'company type' => ['traderCompanyTypeMatch', 4];
+    }
+
+    #[DataProvider('provideMatchProperties')]
+    public function testEachResponseMatchFieldFeedsItsOwnProperty(string $responseKey, int $position): void
+    {
+        $result = self::client(self::jsonResponse(self::validBodyWith($responseKey, 'INVALID')))->check('CZ45274649');
+
+        $expected = array_fill(0, 5, MatchResult::NotProcessed);
+        $expected[$position] = MatchResult::Invalid;
+        self::assertSame(
+            $expected,
+            [$result->nameMatch, $result->streetMatch, $result->postalCodeMatch, $result->cityMatch, $result->companyTypeMatch],
+        );
     }
 
     // --- errors reported with HTTP 200 ---
@@ -584,6 +861,37 @@ final class ViesClientTest extends TestCase
         } catch (InvalidResponse $e) {
             self::assertSame('VIES: expected VAT number at vatNumber', $e->getMessage());
             self::assertStringNotContainsString('SENTINEL', $e->getMessage());
+
+            return;
+        }
+
+        self::fail('Expected InvalidResponse was not thrown.');
+    }
+
+    /**
+     * @return iterable<string, array{string, mixed}>
+     */
+    public static function provideUnknownMatchValues(): iterable
+    {
+        yield 'name, unknown word' => ['traderNameMatch', 'SENTINEL-MATCH'];
+        yield 'street, unknown word' => ['traderStreetMatch', 'SENTINEL-MATCH'];
+        yield 'postal code, unknown word' => ['traderPostalCodeMatch', 'SENTINEL-MATCH'];
+        yield 'city, unknown word' => ['traderCityMatch', 'SENTINEL-MATCH'];
+        yield 'company type, unknown word' => ['traderCompanyTypeMatch', 'SENTINEL-MATCH'];
+        yield 'name, lower case spelling' => ['traderNameMatch', 'valid'];
+    }
+
+    #[DataProvider('provideUnknownMatchValues')]
+    public function testUnknownMatchValueIsInvalidResponseNamingTheKeyButNotTheValue(string $key, mixed $value): void
+    {
+        $client = self::client(self::jsonResponse(self::validBodyWith($key, $value)));
+
+        try {
+            $client->check('CZ45274649');
+        } catch (InvalidResponse $e) {
+            self::assertSame('VIES: expected match result at '.$key, $e->getMessage());
+            self::assertSame(Source::Vies, $e->source);
+            self::assertStringNotContainsString('SENTINEL-MATCH', $e->getMessage());
 
             return;
         }

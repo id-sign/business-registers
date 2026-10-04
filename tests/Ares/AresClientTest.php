@@ -107,6 +107,30 @@ final class AresClientTest extends TestCase
         self::assertStringEndsWith('/ekonomicke-subjekty/45274649', $response->getRequestUrl());
     }
 
+    public function testFindRequestsAnIdFromTheRegisterThatFailsTheCheckDigit(): void
+    {
+        $response = self::json('find-check-digit-mismatch.json');
+
+        $company = self::client($response)->find(CompanyId::fromRegister('00123562'));
+
+        self::assertSame('GET', $response->getRequestMethod());
+        self::assertStringEndsWith('/ekonomicke-subjekty/00123562', $response->getRequestUrl());
+        self::assertNotNull($company);
+        self::assertSame('00123562', $company->id?->value);
+    }
+
+    public function testFindRejectsAStringThatFailsTheCheckDigitWithoutAnyRequest(): void
+    {
+        $httpClient = new MockHttpClient(self::json('find-check-digit-mismatch.json'));
+
+        try {
+            new AresClient($httpClient)->find('00123562');
+            self::fail('Expected InvalidInput was not thrown.');
+        } catch (InvalidInput) {
+            self::assertSame(0, $httpClient->getRequestsCount());
+        }
+    }
+
     public function testFindPadsShortCompanyIdsToEightDigits(): void
     {
         $response = self::json('find-praha.json');

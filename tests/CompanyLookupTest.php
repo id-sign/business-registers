@@ -8,8 +8,11 @@ use IdSign\BusinessRegisters\Adis\BankAccount;
 use IdSign\BusinessRegisters\Adis\SubjectType;
 use IdSign\BusinessRegisters\Adis\VatRegister;
 use IdSign\BusinessRegisters\Adis\VatSubject;
+use IdSign\BusinessRegisters\Adis\VatSubjects;
+use IdSign\BusinessRegisters\Ares\Companies;
 use IdSign\BusinessRegisters\Ares\Company;
 use IdSign\BusinessRegisters\Ares\CompanyDirectory;
+use IdSign\BusinessRegisters\CompanyId;
 use IdSign\BusinessRegisters\CompanyLookup;
 use IdSign\BusinessRegisters\Exception\ExceptionInterface;
 use IdSign\BusinessRegisters\Exception\InvalidInput;
@@ -38,10 +41,10 @@ final class CompanyLookupTest extends TestCase
         return CompanyFactory::create(id: self::ICO, vatId: VatId::parse('CZ45274649'));
     }
 
-    private static function subject(SubjectType $type = SubjectType::VatPayer): VatSubject
+    private static function subject(SubjectType $type = SubjectType::VatPayer, string $vatId = 'CZ45274649'): VatSubject
     {
         return new VatSubject(
-            vatId: VatId::parse('CZ45274649'),
+            vatId: VatId::parse($vatId),
             type: $type,
             unreliable: false,
             unreliableSince: null,
@@ -61,13 +64,18 @@ final class CompanyLookupTest extends TestCase
         );
     }
 
-    private static function viesResult(bool $valid = true): ViesResult
+    private static function viesResult(bool $valid = true, string $vatId = 'CZ45274649'): ViesResult
     {
         return new ViesResult(
-            vatId: VatId::parse('CZ45274649'),
+            vatId: VatId::parse($vatId),
             valid: $valid,
             name: $valid ? 'Test a.s.' : null,
             address: null,
+            nameMatch: null,
+            streetMatch: null,
+            postalCodeMatch: null,
+            cityMatch: null,
+            companyTypeMatch: null,
             consultationNumber: null,
             checkedAt: new \DateTimeImmutable('2026-10-03T10:00:00Z'),
         );
@@ -481,30 +489,109 @@ final class CompanyLookupTest extends TestCase
         self::assertSame([], $profile->flags());
     }
 
-    public function testInvalidInputFromTheVatSectionIsNotCaught(): void
+    public function testInvalidInputFromTheVatSectionIsRecordedAsRejectedWithTheException(): void
     {
         $failure = new InvalidInput('Only Czech VAT ids are accepted');
         $lookup = new CompanyLookup($this->directoryStub(self::companyWithVatId()), $this->vatRegisterFailingWith($failure));
 
-        try {
-            $lookup->byCompanyId(self::ICO, Section::Vat);
-            self::fail('InvalidInput must propagate.');
-        } catch (InvalidInput $caught) {
-            self::assertSame($failure, $caught);
-        }
+        $profile = $lookup->byCompanyId(self::ICO, Section::Vat);
+
+        self::assertNotNull($profile);
+        self::assertSame(SectionStatus::Rejected, $profile->status(Section::Vat));
+        self::assertSame($failure, $profile->error(Section::Vat));
+        self::assertNull($profile->vat);
+        self::assertFalse($profile->isComplete());
     }
 
-    public function testInvalidInputFromTheViesSectionIsNotCaught(): void
+    /**
+     * @return iterable<string, array{InvalidInput}>
+     */
+    public static function provideViesRejections(): iterable
     {
-        $failure = new InvalidInput('Invalid VAT id', 'INVALID_INPUT');
-        $lookup = new CompanyLookup($this->directoryStub(self::companyWithVatId()), null, $this->viesFailingWith($failure));
+        yield 'requester info rejected' => [new InvalidInput('VIES rejected the request', 'INVALID_REQUESTER_INFO')];
+        yield 'invalid input' => [new InvalidInput('VIES rejected the request', 'INVALID_INPUT')];
+        yield 'http 400' => [new InvalidInput('VIES answered HTTP 400')];
+    }
 
-        try {
-            $lookup->byCompanyId(self::ICO, Section::Vies);
-            self::fail('InvalidInput must propagate.');
-        } catch (InvalidInput $caught) {
-            self::assertSame($failure, $caught);
-        }
+    #[DataProvider('provideViesRejections')]
+    public function testInvalidInputFromTheViesSectionIsRecordedAsRejectedWithTheException(InvalidInput $rejection): void
+    {
+        $lookup = new CompanyLookup($this->directoryStub(self::companyWithVatId()), null, $this->viesFailingWith($rejection));
+
+        $profile = $lookup->byCompanyId(self::ICO, Section::Vies);
+
+        self::assertNotNull($profile);
+        self::assertSame(SectionStatus::Rejected, $profile->status(Section::Vies));
+        self::assertSame($rejection, $profile->error(Section::Vies));
+        self::assertNull($profile->vies);
+        self::assertFalse($profile->isComplete());
+    }
+
+    public function testViesRequesterErrorKeepsTheVatSectionAndItsErrorCode(): void
+    {
+        $rejection = new InvalidInput('VIES rejected the request', 'INVALID_REQUESTER_INFO');
+        $subject = self::subject();
+        $lookup = new CompanyLookup(
+            $this->directoryStub(self::companyWithVatId()),
+            $this->vatRegisterStub($subject),
+            $this->viesFailingWith($rejection),
+        );
+
+        $profile = $lookup->byCompanyId(self::ICO, Section::Vat, Section::Vies);
+
+        self::assertNotNull($profile);
+        self::assertSame(SectionStatus::Ok, $profile->status(Section::Vat));
+        self::assertSame($subject, $profile->vat);
+        self::assertSame(SectionStatus::Rejected, $profile->status(Section::Vies));
+        $error = $profile->error(Section::Vies);
+        self::assertInstanceOf(InvalidInput::class, $error);
+        self::assertSame('INVALID_REQUESTER_INFO', $error->errorCode);
+        self::assertNull($profile->error(Section::Vat));
+    }
+
+    public function testVatRejectionDoesNotAffectTheViesSection(): void
+    {
+        $rejection = new InvalidInput('Only Czech VAT ids are accepted');
+        $result = self::viesResult();
+        $lookup = new CompanyLookup(
+            $this->directoryStub(self::companyWithVatId()),
+            $this->vatRegisterFailingWith($rejection),
+            $this->viesStub($result),
+        );
+
+        $profile = $lookup->byCompanyId(self::ICO, Section::Vat, Section::Vies);
+
+        self::assertNotNull($profile);
+        self::assertSame(SectionStatus::Rejected, $profile->status(Section::Vat));
+        self::assertSame(SectionStatus::Ok, $profile->status(Section::Vies));
+        self::assertSame($result, $profile->vies);
+    }
+
+    public function testNoFlagIsRaisedFromARejectedSection(): void
+    {
+        $lookup = new CompanyLookup(
+            $this->directoryStub(self::companyWithVatId()),
+            $this->vatRegisterFailingWith(new InvalidInput('Only Czech VAT ids are accepted')),
+            $this->viesFailingWith(new InvalidInput('VIES rejected the request', 'INVALID_REQUESTER_INFO')),
+        );
+
+        $profile = $lookup->byCompanyId(self::ICO, Section::Vat, Section::Vies);
+
+        self::assertNotNull($profile);
+        self::assertSame([], $profile->flags());
+    }
+
+    public function testProfileShortcutIsUnknownWhenAdisRejectsTheRequest(): void
+    {
+        $lookup = new CompanyLookup(
+            $this->directoryStub(self::companyWithVatId()),
+            $this->vatRegisterFailingWith(new InvalidInput('Only Czech VAT ids are accepted')),
+        );
+
+        $profile = $lookup->byCompanyId(self::ICO, Section::Vat);
+
+        self::assertNotNull($profile);
+        self::assertNull($profile->isVatPayer());
     }
 
     public function testVatGroupMemberIsLookedUpInAdisUnderTheGroupVatId(): void
@@ -607,5 +694,595 @@ final class CompanyLookupTest extends TestCase
         $this->expectException(\LogicException::class);
 
         $profile->isVatPayer();
+    }
+
+    private static function bulkCompany(CompanyId|string $ico, ?string $vatId = null, ?string $groupVatId = null): Company
+    {
+        return CompanyFactory::create(
+            id: $ico,
+            vatId: null === $vatId ? null : VatId::parse($vatId),
+            groupVatId: null === $groupVatId ? null : VatId::parse($groupVatId),
+        );
+    }
+
+    /**
+     * Sorted string forms of a VAT id list, whatever mix of VatId and string the facade passes.
+     *
+     * @return list<string>
+     */
+    private static function sortedVatIds(mixed $vatIds): array
+    {
+        if (!\is_array($vatIds)) {
+            return [];
+        }
+
+        $strings = [];
+        foreach ($vatIds as $vatId) {
+            $strings[] = $vatId instanceof VatId || \is_string($vatId) ? (string) $vatId : '';
+        }
+        sort($strings);
+
+        return $strings;
+    }
+
+    /**
+     * @return \ArrayObject<int, array{string, ?string}> empty log of VIES calls
+     */
+    private static function callLog(): \ArrayObject
+    {
+        return new \ArrayObject();
+    }
+
+    /**
+     * ARES answers with the given companies; the test does not care how often it is asked.
+     *
+     * @param list<Company> $companies
+     */
+    private function directoryFindingMany(array $companies): CompanyDirectory
+    {
+        $directory = self::createStub(CompanyDirectory::class);
+        $directory->method('findMany')->willReturn(new Companies($companies));
+
+        return $directory;
+    }
+
+    /**
+     * ARES that must be asked exactly once, in bulk.
+     *
+     * @param list<Company> $companies
+     */
+    private function directoryFindingManyOnce(array $companies): CompanyDirectory&MockObject
+    {
+        $directory = $this->createMock(CompanyDirectory::class);
+        $directory->expects(self::once())->method('findMany')->willReturn(new Companies($companies))->seal();
+
+        return $directory;
+    }
+
+    private function untouchedBulkDirectory(): CompanyDirectory&MockObject
+    {
+        $directory = $this->createMock(CompanyDirectory::class);
+        $directory->expects(self::never())->method('findMany')->seal();
+
+        return $directory;
+    }
+
+    private function untouchedBulkVatRegister(): VatRegister&MockObject
+    {
+        $register = $this->createMock(VatRegister::class);
+        $register->expects(self::never())->method('findMany')->seal();
+
+        return $register;
+    }
+
+    /**
+     * VatRegister that must be asked exactly once, in bulk, for exactly the given VAT ids (any order).
+     *
+     * @param list<string>     $expectedVatIds
+     * @param list<VatSubject> $subjects
+     */
+    private function bulkVatRegisterAskedFor(array $expectedVatIds, array $subjects): VatRegister&MockObject
+    {
+        sort($expectedVatIds);
+        $register = $this->createMock(VatRegister::class);
+        $register->expects(self::once())
+            ->method('findMany')
+            ->with(self::callback(static fn (mixed $vatIds): bool => self::sortedVatIds($vatIds) === $expectedVatIds))
+            ->willReturn(new VatSubjects($subjects))
+            ->seal();
+
+        return $register;
+    }
+
+    private function bulkVatRegisterFailingWith(\Throwable $exception): VatRegister
+    {
+        $register = self::createStub(VatRegister::class);
+        $register->method('findMany')->willThrowException($exception);
+
+        return $register;
+    }
+
+    /**
+     * Vies that must be asked exactly $calls times; every call is appended to $asked as [VAT id, requester].
+     *
+     * @param array<string, ViesResult|\Throwable>      $answers keyed by the VAT id asked for
+     * @param \ArrayObject<int, array{string, ?string}> $asked
+     */
+    private function viesAnswering(array $answers, \ArrayObject $asked, int $calls): Vies&MockObject
+    {
+        $vies = $this->createMock(Vies::class);
+        $vies->expects(self::exactly($calls))
+            ->method('check')
+            ->willReturnCallback(static function (VatId|string $vatId, VatId|string|null $requester = null) use ($answers, $asked): ViesResult {
+                $asked[] = [(string) $vatId, null === $requester ? null : (string) $requester];
+                $answer = $answers[(string) $vatId] ?? throw new \LogicException(\sprintf('Unexpected VIES call for %s', $vatId));
+                if ($answer instanceof \Throwable) {
+                    throw $answer;
+                }
+
+                return $answer;
+            })
+            ->seal();
+
+        return $vies;
+    }
+
+    public function testBulkLookupOfOneHundredCompaniesWithTheVatSectionIsOneAresAndOneAdisRequest(): void
+    {
+        $ids = [];
+        $companies = [];
+        $subjects = [];
+        $vatIds = [];
+        for ($i = 1; $i <= 100; ++$i) {
+            $ico = \sprintf('%08d', 10000000 + $i);
+            $ids[] = CompanyId::fromRegister($ico);
+            $companies[] = self::bulkCompany(CompanyId::fromRegister($ico), 'CZ'.$ico);
+            $subjects[] = self::subject(vatId: 'CZ'.$ico);
+            $vatIds[] = 'CZ'.$ico;
+        }
+        $lookup = new CompanyLookup($this->directoryFindingManyOnce($companies), $this->bulkVatRegisterAskedFor($vatIds, $subjects));
+
+        $profiles = $lookup->byCompanyIds($ids, Section::Vat);
+
+        self::assertCount(100, $profiles);
+        foreach ($profiles as $profile) {
+            self::assertSame(SectionStatus::Ok, $profile->status(Section::Vat));
+        }
+    }
+
+    public function testBulkLookupReturnsACompanyProfilesCollectionInTheOrderAresAnswered(): void
+    {
+        $cez = self::bulkCompany('45274649');
+        $kb = self::bulkCompany('45317054');
+        $lookup = new CompanyLookup($this->directoryFindingMany([$cez, $kb]));
+
+        $profiles = $lookup->byCompanyIds(['45317054', '45274649']);
+
+        self::assertCount(2, $profiles);
+        self::assertSame([$cez, $kb], array_map(static fn ($profile) => $profile->company, $profiles->all()));
+        self::assertSame($cez, $profiles->get('45274649')?->company);
+    }
+
+    public function testBulkLookupWithoutSectionsAsksOnlyAres(): void
+    {
+        $lookup = new CompanyLookup(
+            $this->directoryFindingManyOnce([self::bulkCompany('45274649', 'CZ45274649')]),
+            $this->untouchedBulkVatRegister(),
+            $this->untouchedVies(),
+        );
+
+        $profiles = $lookup->byCompanyIds(['45274649']);
+
+        $profile = $profiles->get('45274649');
+        self::assertNotNull($profile);
+        self::assertSame(SectionStatus::NotRequested, $profile->status(Section::Vat));
+        self::assertSame(SectionStatus::NotRequested, $profile->status(Section::Vies));
+        self::assertNull($profile->vat);
+        self::assertTrue($profile->isComplete());
+    }
+
+    public function testBulkLookupVatSectionIsOkWithTheRegisterSubjectOfEachCompany(): void
+    {
+        $subject = self::subject();
+        $lookup = new CompanyLookup(
+            $this->directoryFindingMany([self::bulkCompany('45274649', 'CZ45274649'), self::bulkCompany('28255933', 'CZ28255933')]),
+            $this->bulkVatRegisterAskedFor(['CZ45274649', 'CZ28255933'], [$subject, self::subject(vatId: 'CZ28255933')]),
+        );
+
+        $profiles = $lookup->byCompanyIds(['45274649', '28255933'], Section::Vat);
+
+        $profile = $profiles->get('45274649');
+        self::assertNotNull($profile);
+        self::assertSame(SectionStatus::Ok, $profile->status(Section::Vat));
+        self::assertSame($subject, $profile->vat);
+        self::assertTrue($profile->isVatPayer());
+        self::assertSame(SectionStatus::NotRequested, $profile->status(Section::Vies));
+        self::assertSame('CZ28255933', (string) $profiles->get('28255933')?->vat?->vatId);
+    }
+
+    public function testBulkLookupAsksAdisOnceForAVatGroupAndEveryMemberGetsTheGroupSubject(): void
+    {
+        $group = self::subject(SubjectType::VatGroup, 'CZ699001182');
+        $lookup = new CompanyLookup(
+            $this->directoryFindingMany([
+                self::bulkCompany('45317054', null, 'CZ699001182'),
+                self::bulkCompany('27082440', null, 'CZ699001182'),
+                self::bulkCompany('45274649', 'CZ45274649'),
+            ]),
+            $this->bulkVatRegisterAskedFor(['CZ699001182', 'CZ45274649'], [$group, self::subject()]),
+        );
+
+        $profiles = $lookup->byCompanyIds(['45317054', '27082440', '45274649'], Section::Vat);
+
+        $first = $profiles->get('45317054');
+        $second = $profiles->get('27082440');
+        self::assertNotNull($first);
+        self::assertNotNull($second);
+        self::assertSame($group, $first->vat);
+        self::assertSame($group, $second->vat);
+        self::assertSame(SectionStatus::Ok, $second->status(Section::Vat));
+    }
+
+    public function testBulkLookupAsksAdisUnderTheGroupVatIdEvenWhenTheMemberHasItsOwn(): void
+    {
+        $lookup = new CompanyLookup(
+            $this->directoryFindingMany([self::bulkCompany('45317054', 'CZ45317054', 'CZ699001182')]),
+            $this->bulkVatRegisterAskedFor(['CZ699001182'], []),
+        );
+
+        $profiles = $lookup->byCompanyIds(['45317054'], Section::Vat);
+
+        self::assertSame(SectionStatus::NotFound, $profiles->get('45317054')?->status(Section::Vat));
+    }
+
+    public function testBulkLookupMarksACompanyWithoutAVatIdNotApplicableInBothSectionsAndDoesNotAskForIt(): void
+    {
+        $asked = self::callLog();
+        $lookup = new CompanyLookup(
+            $this->directoryFindingMany([self::bulkCompany('00064581'), self::bulkCompany('45274649', 'CZ45274649')]),
+            $this->bulkVatRegisterAskedFor(['CZ45274649'], [self::subject()]),
+            $this->viesAnswering(['CZ45274649' => self::viesResult()], $asked, 1),
+        );
+
+        $profiles = $lookup->byCompanyIds(['00064581', '45274649'], Section::Vat, Section::Vies);
+
+        $withoutVatId = $profiles->get('00064581');
+        self::assertNotNull($withoutVatId);
+        self::assertSame(SectionStatus::NotApplicable, $withoutVatId->status(Section::Vat));
+        self::assertSame(SectionStatus::NotApplicable, $withoutVatId->status(Section::Vies));
+        self::assertNull($withoutVatId->vat);
+        self::assertNull($withoutVatId->vies);
+        self::assertSame([['CZ45274649', null]], $asked->getArrayCopy());
+    }
+
+    public function testBulkLookupOfCompaniesWithoutAnyVatIdAsksNoSource(): void
+    {
+        $lookup = new CompanyLookup(
+            $this->directoryFindingMany([self::bulkCompany('00064581')]),
+            $this->untouchedBulkVatRegister(),
+            $this->untouchedVies(),
+        );
+
+        $profile = $lookup->byCompanyIds(['00064581'], Section::Vat, Section::Vies)->get('00064581');
+
+        self::assertNotNull($profile);
+        self::assertSame(SectionStatus::NotApplicable, $profile->status(Section::Vat));
+        self::assertSame(SectionStatus::NotApplicable, $profile->status(Section::Vies));
+    }
+
+    public function testBulkLookupVatIdUnknownToAdisIsNotFound(): void
+    {
+        $lookup = new CompanyLookup(
+            $this->directoryFindingMany([self::bulkCompany('45274649', 'CZ45274649'), self::bulkCompany('28255933', 'CZ28255933')]),
+            $this->bulkVatRegisterAskedFor(['CZ45274649', 'CZ28255933'], [self::subject()]),
+        );
+
+        $profiles = $lookup->byCompanyIds(['45274649', '28255933'], Section::Vat);
+
+        $unknown = $profiles->get('28255933');
+        self::assertNotNull($unknown);
+        self::assertSame(SectionStatus::NotFound, $unknown->status(Section::Vat));
+        self::assertNull($unknown->vat);
+        self::assertTrue($unknown->isComplete());
+        self::assertSame(SectionStatus::Ok, $profiles->get('45274649')?->status(Section::Vat));
+    }
+
+    public function testBulkLookupReportsAnIdUnknownToAresAsMissingAndAsksNoSectionForIt(): void
+    {
+        $lookup = new CompanyLookup(
+            $this->directoryFindingMany([self::bulkCompany('45274649', 'CZ45274649')]),
+            $this->bulkVatRegisterAskedFor(['CZ45274649'], [self::subject()]),
+        );
+
+        $profiles = $lookup->byCompanyIds(['45274649', '04957423'], Section::Vat);
+
+        self::assertCount(1, $profiles);
+        self::assertFalse($profiles->has('04957423'));
+        self::assertEquals([CompanyId::parse('04957423')], $profiles->missing(['45274649', '04957423']));
+    }
+
+    public function testBulkLookupWithAnAdisOutageMakesTheVatSectionUnavailableForEveryAskedCompany(): void
+    {
+        $outage = new ServiceUnavailable('ADIS is down', Source::Adis);
+        $lookup = new CompanyLookup(
+            $this->directoryFindingMany([
+                self::bulkCompany('45274649', 'CZ45274649'),
+                self::bulkCompany('45317054', null, 'CZ699001182'),
+                self::bulkCompany('00064581'),
+            ]),
+            $this->bulkVatRegisterFailingWith($outage),
+        );
+
+        $profiles = $lookup->byCompanyIds(['45274649', '45317054', '00064581'], Section::Vat);
+
+        foreach (['45274649', '45317054'] as $ico) {
+            $profile = $profiles->get($ico);
+            self::assertNotNull($profile);
+            self::assertSame(SectionStatus::Unavailable, $profile->status(Section::Vat));
+            self::assertSame($outage, $profile->error(Section::Vat));
+            self::assertNull($profile->vat);
+            self::assertNull($profile->isVatPayer());
+            self::assertFalse($profile->isComplete());
+        }
+        self::assertSame(SectionStatus::NotApplicable, $profiles->get('00064581')?->status(Section::Vat));
+    }
+
+    public function testBulkLookupWithAnInvalidAdisResponseMakesTheVatSectionUnavailable(): void
+    {
+        $outage = new InvalidResponse('ADIS: missing s:Body', Source::Adis);
+        $lookup = new CompanyLookup(
+            $this->directoryFindingMany([self::bulkCompany('45274649', 'CZ45274649')]),
+            $this->bulkVatRegisterFailingWith($outage),
+        );
+
+        $profile = $lookup->byCompanyIds(['45274649'], Section::Vat)->get('45274649');
+
+        self::assertNotNull($profile);
+        self::assertSame(SectionStatus::Unavailable, $profile->status(Section::Vat));
+        self::assertSame($outage, $profile->error(Section::Vat));
+    }
+
+    public function testBulkLookupWithAnAdisRejectionMakesTheVatSectionRejectedForEveryAskedCompany(): void
+    {
+        $rejection = new InvalidInput('ADIS rejected the request');
+        $lookup = new CompanyLookup(
+            $this->directoryFindingMany([self::bulkCompany('45274649', 'CZ45274649'), self::bulkCompany('28255933', 'CZ28255933')]),
+            $this->bulkVatRegisterFailingWith($rejection),
+        );
+
+        $profiles = $lookup->byCompanyIds(['45274649', '28255933'], Section::Vat);
+
+        foreach ($profiles as $profile) {
+            self::assertSame(SectionStatus::Rejected, $profile->status(Section::Vat));
+            self::assertSame($rejection, $profile->error(Section::Vat));
+            self::assertNull($profile->vat);
+            self::assertNull($profile->isVatPayer());
+        }
+    }
+
+    public function testBulkLookupRejectsOnlyTheCompanyWithANonCzechVatIdAndStillAsksAdisForTheOthers(): void
+    {
+        $lookup = new CompanyLookup(
+            $this->directoryFindingMany([self::bulkCompany('45274649', 'CZ45274649'), self::bulkCompany('28255933', 'DE123456789')]),
+            $this->bulkVatRegisterAskedFor(['CZ45274649'], [self::subject()]),
+        );
+
+        $profiles = $lookup->byCompanyIds(['45274649', '28255933'], Section::Vat);
+
+        $foreign = $profiles->get('28255933');
+        self::assertNotNull($foreign);
+        self::assertSame(SectionStatus::Rejected, $foreign->status(Section::Vat));
+        self::assertInstanceOf(InvalidInput::class, $foreign->error(Section::Vat));
+        self::assertNull($foreign->vat);
+        self::assertSame(SectionStatus::Ok, $profiles->get('45274649')?->status(Section::Vat));
+    }
+
+    #[DataProvider('provideAresFailures')]
+    public function testBulkLookupAresFailureIsNotCaughtAndNoSectionIsAsked(ExceptionInterface&\Throwable $failure): void
+    {
+        $directory = self::createStub(CompanyDirectory::class);
+        $directory->method('findMany')->willThrowException($failure);
+        $lookup = new CompanyLookup($directory, $this->untouchedBulkVatRegister(), $this->untouchedVies());
+
+        try {
+            $lookup->byCompanyIds(['45274649'], Section::Vat, Section::Vies);
+            self::fail('The ARES failure must propagate.');
+        } catch (\Throwable $caught) {
+            self::assertSame($failure, $caught);
+        }
+    }
+
+    public function testBulkLookupAsksViesOncePerCompanyWithAVatIdPassingTheRequester(): void
+    {
+        $requester = VatId::parse('CZ27082440');
+        $asked = self::callLog();
+        $first = self::viesResult();
+        $second = self::viesResult(vatId: 'CZ28255933');
+        $lookup = new CompanyLookup(
+            $this->directoryFindingMany([self::bulkCompany('45274649', 'CZ45274649'), self::bulkCompany('28255933', 'CZ28255933')]),
+            null,
+            $this->viesAnswering(['CZ45274649' => $first, 'CZ28255933' => $second], $asked, 2),
+            $requester,
+        );
+
+        $profiles = $lookup->byCompanyIds(['45274649', '28255933'], Section::Vies);
+
+        $firstProfile = $profiles->get('45274649');
+        self::assertNotNull($firstProfile);
+        self::assertSame($first, $firstProfile->vies);
+        self::assertSame(SectionStatus::Ok, $firstProfile->status(Section::Vies));
+        self::assertSame($second, $profiles->get('28255933')?->vies);
+        self::assertEqualsCanonicalizing(
+            [['CZ45274649', 'CZ27082440'], ['CZ28255933', 'CZ27082440']],
+            $asked->getArrayCopy(),
+        );
+    }
+
+    public function testBulkLookupViesIsCheckedUnderTheGroupVatIdOfAMember(): void
+    {
+        $asked = self::callLog();
+        $lookup = new CompanyLookup(
+            $this->directoryFindingMany([self::bulkCompany('45317054', null, 'CZ699001182')]),
+            null,
+            $this->viesAnswering(['CZ699001182' => self::viesResult(vatId: 'CZ699001182')], $asked, 1),
+        );
+
+        $profile = $lookup->byCompanyIds(['45317054'], Section::Vies)->get('45317054');
+
+        self::assertNotNull($profile);
+        self::assertSame(SectionStatus::Ok, $profile->status(Section::Vies));
+        self::assertSame([['CZ699001182', null]], $asked->getArrayCopy());
+    }
+
+    public function testBulkLookupViesCapacityRejectionMakesOnlyThatCompanysViesSectionUnavailable(): void
+    {
+        $outage = new ServiceUnavailable('VIES is busy', Source::Vies, 'MS_MAX_CONCURRENT_REQ');
+        $ok = self::viesResult(vatId: 'CZ28255933');
+        $lookup = new CompanyLookup(
+            $this->directoryFindingMany([self::bulkCompany('45274649', 'CZ45274649'), self::bulkCompany('28255933', 'CZ28255933')]),
+            null,
+            $this->viesAnswering(['CZ45274649' => $outage, 'CZ28255933' => $ok], self::callLog(), 2),
+        );
+
+        $profiles = $lookup->byCompanyIds(['45274649', '28255933'], Section::Vies);
+
+        $busy = $profiles->get('45274649');
+        self::assertNotNull($busy);
+        self::assertSame(SectionStatus::Unavailable, $busy->status(Section::Vies));
+        self::assertSame($outage, $busy->error(Section::Vies));
+        self::assertNull($busy->vies);
+        $fine = $profiles->get('28255933');
+        self::assertNotNull($fine);
+        self::assertSame(SectionStatus::Ok, $fine->status(Section::Vies));
+        self::assertSame($ok, $fine->vies);
+    }
+
+    public function testBulkLookupViesRequesterErrorMakesThatCompanysViesSectionRejected(): void
+    {
+        $rejection = new InvalidInput('VIES rejected the request', 'INVALID_REQUESTER_INFO');
+        $lookup = new CompanyLookup(
+            $this->directoryFindingMany([self::bulkCompany('45274649', 'CZ45274649')]),
+            null,
+            $this->viesAnswering(['CZ45274649' => $rejection], self::callLog(), 1),
+        );
+
+        $profile = $lookup->byCompanyIds(['45274649'], Section::Vies)->get('45274649');
+
+        self::assertNotNull($profile);
+        self::assertSame(SectionStatus::Rejected, $profile->status(Section::Vies));
+        self::assertSame($rejection, $profile->error(Section::Vies));
+        self::assertNull($profile->vies);
+    }
+
+    public function testBulkLookupAdisOutageDoesNotAffectTheViesSection(): void
+    {
+        $outage = new ServiceUnavailable('ADIS is down', Source::Adis);
+        $result = self::viesResult();
+        $lookup = new CompanyLookup(
+            $this->directoryFindingMany([self::bulkCompany('45274649', 'CZ45274649')]),
+            $this->bulkVatRegisterFailingWith($outage),
+            $this->viesAnswering(['CZ45274649' => $result], self::callLog(), 1),
+        );
+
+        $profile = $lookup->byCompanyIds(['45274649'], Section::Vat, Section::Vies)->get('45274649');
+
+        self::assertNotNull($profile);
+        self::assertSame(SectionStatus::Unavailable, $profile->status(Section::Vat));
+        self::assertSame(SectionStatus::Ok, $profile->status(Section::Vies));
+        self::assertSame($result, $profile->vies);
+    }
+
+    public function testBulkLookupASectionRequestedTwiceIsAskedOnce(): void
+    {
+        $lookup = new CompanyLookup(
+            $this->directoryFindingMany([self::bulkCompany('45274649', 'CZ45274649')]),
+            $this->bulkVatRegisterAskedFor(['CZ45274649'], [self::subject()]),
+        );
+
+        $profile = $lookup->byCompanyIds(['45274649'], Section::Vat, Section::Vat)->get('45274649');
+
+        self::assertSame(SectionStatus::Ok, $profile?->status(Section::Vat));
+    }
+
+    public function testBulkLookupOfNoIdsAsksNoSectionAndReturnsAnEmptyCollection(): void
+    {
+        $register = self::createStub(VatRegister::class);
+        $register->method('findMany')->willReturn(new VatSubjects([]));
+        $lookup = new CompanyLookup($this->directoryFindingMany([]), $register, $this->untouchedVies());
+
+        $profiles = $lookup->byCompanyIds([], Section::Vat, Section::Vies);
+
+        self::assertCount(0, $profiles);
+        self::assertSame([], $profiles->all());
+    }
+
+    public function testBulkLookupAcceptsACompanyIdThatFailsTheCheckDigit(): void
+    {
+        $company = CompanyFactory::create(id: CompanyId::fromRegister('00123562'));
+        $lookup = new CompanyLookup($this->directoryFindingManyOnce([$company]));
+
+        $profiles = $lookup->byCompanyIds([CompanyId::fromRegister('00123562')]);
+
+        self::assertSame($company, $profiles->get(CompanyId::fromRegister('00123562'))?->company);
+    }
+
+    public function testBulkLookupRejectsAStringIdThatFailsTheCheckDigitBeforeAnyRequest(): void
+    {
+        $lookup = new CompanyLookup($this->untouchedBulkDirectory(), $this->untouchedBulkVatRegister(), $this->untouchedVies());
+
+        $this->expectException(InvalidInput::class);
+
+        $lookup->byCompanyIds(['45274649', '00123562'], Section::Vat, Section::Vies);
+    }
+
+    /**
+     * @return iterable<string, array{mixed}>
+     */
+    public static function provideInvalidIdElements(): iterable
+    {
+        yield 'int' => [45274649];
+        yield 'null' => [null];
+        yield 'array' => [['45274649']];
+        yield 'object' => [new \stdClass()];
+        yield 'empty string' => [''];
+        yield 'letters' => ['abc'];
+    }
+
+    #[DataProvider('provideInvalidIdElements')]
+    public function testBulkLookupRejectsAnInvalidElementBeforeAnyRequest(mixed $element): void
+    {
+        $lookup = new CompanyLookup($this->untouchedBulkDirectory(), $this->untouchedBulkVatRegister(), $this->untouchedVies());
+
+        $this->expectException(InvalidInput::class);
+
+        // reflection: PHPStan rejects a wrong-typed element in the typed list; the runtime check is what non-analysed callers hit
+        new \ReflectionMethod($lookup, 'byCompanyIds')->invoke($lookup, ['45274649', $element], Section::Vat, Section::Vies);
+    }
+
+    public function testBulkLookupVatSectionWithoutAVatRegisterIsALogicErrorBeforeAnyRequest(): void
+    {
+        $lookup = new CompanyLookup($this->untouchedBulkDirectory(), null, $this->untouchedVies());
+
+        $this->expectException(\LogicException::class);
+
+        $lookup->byCompanyIds(['45274649'], Section::Vat);
+    }
+
+    public function testBulkLookupViesSectionWithoutViesIsALogicErrorBeforeAnyRequest(): void
+    {
+        $lookup = new CompanyLookup($this->untouchedBulkDirectory(), $this->untouchedBulkVatRegister());
+
+        $this->expectException(\LogicException::class);
+
+        $lookup->byCompanyIds(['45274649'], Section::Vies);
+    }
+
+    public function testBulkLookupMissingClientOfALaterSectionStopsBeforeTheEarlierSectionIsAsked(): void
+    {
+        $lookup = new CompanyLookup($this->untouchedBulkDirectory(), $this->untouchedBulkVatRegister());
+
+        $this->expectException(\LogicException::class);
+
+        $lookup->byCompanyIds(['45274649'], Section::Vat, Section::Vies);
     }
 }

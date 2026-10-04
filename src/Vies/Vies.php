@@ -17,11 +17,17 @@ interface Vies
     /**
      * An invalid VAT id is a result with valid false, never an exception.
      *
-     * @param VatId|string|null $requester own VAT id of the asking party; only with it VIES issues a consultation number
+     * With trader details VIES compares each given field with the register and answers per field in the *Match
+     * properties of the result; many member states, the Czech Republic and Ireland among them, always answer
+     * NOT_PROCESSED.
      *
-     * @throws InvalidInput       an unparsable VAT id or requester, or a request VIES rejected (errorCode carries its code)
+     * @param VatId|string|null $requester own VAT id of the asking party; only with it VIES issues a consultation number
+     * @param ?TraderDetails    $trader    trader data to compare; null and blank fields are not sent
+     *
+     * @throws InvalidInput       an unparsable VAT id or requester, trader details that are not valid UTF-8 (before any
+     *                            request), or a request VIES rejected (errorCode carries its code)
      * @throws ServiceUnavailable VIES or the member state could not answer (errorCode carries the VIES code, if any)
      * @throws InvalidResponse
      */
-    public function check(VatId|string $vatId, VatId|string|null $requester = null): ViesResult;
+    public function check(VatId|string $vatId, VatId|string|null $requester = null, ?TraderDetails $trader = null): ViesResult;
 }

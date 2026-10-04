@@ -67,7 +67,7 @@ final class CompanyMapper
         }
 
         try {
-            return CompanyId::parse($value);
+            return CompanyId::fromRegister($value);
         } catch (InvalidInput) {
             throw $subject->invalid('ico', 'company id');
         }

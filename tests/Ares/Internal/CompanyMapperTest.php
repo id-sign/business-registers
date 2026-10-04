@@ -152,6 +152,25 @@ final class CompanyMapperTest extends TestCase
         self::assertNull($company->fileNumber);
     }
 
+    // --- company id from the register ---
+
+    public function testRegisterSubjectWithAWrongCheckDigitKeepsItsCompanyId(): void
+    {
+        $company = self::fromFixture('find-check-digit-mismatch.json');
+
+        self::assertNotNull($company->id);
+        self::assertSame('00123562', $company->id->value);
+        self::assertFalse($company->id->hasValidCheckDigit());
+        self::assertSame('Zemědělské družstvo Předměřice nad Labem - v likvidaci', $company->name);
+    }
+
+    public function testShortCompanyIdFromTheRegisterIsLeftPadded(): void
+    {
+        $company = self::fromJson('{"icoId": "123562", "obchodniJmeno": "T", "ico": "123562"}');
+
+        self::assertSame('00123562', $company->id?->value);
+    }
+
     // --- VAT ids ---
 
     public function testRecordWithoutDicHasNoVatId(): void
@@ -264,6 +283,14 @@ final class CompanyMapperTest extends TestCase
 
         self::assertSame('ARES: expected company id at ico', $e->getMessage());
         self::assertStringNotContainsString('SENTINEL-ICO', $e->getMessage());
+    }
+
+    public function testNineDigitCompanyIdIsInvalidResponseWithoutTheValue(): void
+    {
+        $e = self::failure('{"icoId": "45274649", "obchodniJmeno": "T", "ico": "045274649"}');
+
+        self::assertSame('ARES: expected company id at ico', $e->getMessage());
+        self::assertStringNotContainsString('045274649', $e->getMessage());
     }
 
     public function testUnparsableVatIdIsInvalidResponseWithoutTheValue(): void

@@ -52,10 +52,14 @@ final class CompanyTest extends TestCase
         yield '101 lower bound' => ['101', true];
         yield '105 inside' => ['105', true];
         yield '108 upper bound' => ['108', true];
-        yield '100 below' => ['100', false];
+        yield '100 natural person in the commercial register' => ['100', true];
         yield '109 above' => ['109', false];
-        yield '121 joint-stock company' => ['121', false];
+        yield '111 general partnership' => ['111', false];
         yield '112 limited company' => ['112', false];
+        yield '121 joint-stock company' => ['121', false];
+        yield '421 branch of a foreign legal person' => ['421', false];
+        yield '424 foreign natural person' => ['424', true];
+        yield '425 branch of a foreign natural person' => ['425', true];
         yield 'unknown legal form' => [null, false];
     }
 

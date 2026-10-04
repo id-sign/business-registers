@@ -39,8 +39,9 @@ All implement `Exception\ExceptionInterface`.
 
 - **ARES:** 404 with `NENALEZENO` / `VYSTUP_SUBJEKT_NENALEZEN` → `null`; other 404 and any other non-200 →
   `ServiceUnavailable` (code = `subKod`); 400 → `InvalidInput` (code = `subKod`, e.g. `VYSTUP_PRILIS_MNOHO_VYSLEDKU`).
-- **ADIS:** HTTP ≠ 200 or SOAP Fault → `ServiceUnavailable` (code = `faultcode`); `statusCode` 2 (maintenance) and 3
-  (unavailable) → `ServiceUnavailable` with the code; 1 or unknown → `InvalidResponse`; `NENALEZEN` → `null` / absent.
+- **ADIS:** HTTP ≠ 200 → `ServiceUnavailable`, code = `faultcode` when the body is a SOAP Fault (read leniently),
+  else `null`; SOAP Fault with HTTP 200 → the same; `statusCode` 2 (maintenance) and 3 (unavailable) →
+  `ServiceUnavailable` with the code; 1 or unknown → `InvalidResponse`; `NENALEZEN` → `null` / absent.
 - **VIES:** an error arrives with HTTP 200 and `actionSucceed: false` / `errorWrappers` — it is never read as
   `valid: false`. `INVALID_INPUT`, `INVALID_REQUESTER_INFO` → `InvalidInput`; any other code → `ServiceUnavailable`;
   HTTP 400 → `InvalidInput`; other non-200 → `ServiceUnavailable`; both with the first `errorWrappers[0].error` read

@@ -96,6 +96,96 @@ final class CompanyIdTest extends TestCase
         self::assertSame('00064581', (string) CompanyId::parse('64581'));
     }
 
+    /**
+     * @return iterable<string, array{string, string}>
+     */
+    public static function provideRegisterInputs(): iterable
+    {
+        yield 'valid id' => ['45274649', '45274649'];
+        yield 'with spaces' => ['452 746 49', '45274649'];
+        yield 'padded with leading and trailing whitespace' => ["  45274649\t\n", '45274649'];
+        yield 'short input is left-padded' => ['64581', '00064581'];
+        yield 'active subject with a wrong check digit' => ['00123562', '00123562'];
+        yield 'short active subject with a wrong check digit' => ['123562', '00123562'];
+        yield 'another active subject with a wrong check digit' => ['29340042', '29340042'];
+        yield 'all zeros' => ['00000000', '00000000'];
+    }
+
+    #[DataProvider('provideRegisterInputs')]
+    public function testFromRegisterNormalisesToEightDigitsWithoutCheckingTheCheckDigit(string $input, string $expected): void
+    {
+        self::assertSame($expected, CompanyId::fromRegister($input)->value);
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function provideMalformedRegisterInputs(): iterable
+    {
+        yield 'letters' => ['abc'];
+        yield 'empty' => [''];
+        yield 'only whitespace' => ['   '];
+        yield 'nine digits' => ['123456789'];
+        yield 'nine digits with leading zero' => ['045274649'];
+        yield 'digits with a letter' => ['4527464a'];
+        yield 'negative sign' => ['-4527464'];
+    }
+
+    #[DataProvider('provideMalformedRegisterInputs')]
+    public function testFromRegisterRejectsAMalformedValueWithInvalidInput(string $input): void
+    {
+        $this->expectException(InvalidInput::class);
+
+        CompanyId::fromRegister($input);
+    }
+
+    /**
+     * @return iterable<string, array{string, bool}>
+     */
+    public static function provideCheckDigitResults(): iterable
+    {
+        yield 'valid id' => ['45274649', true];
+        yield 'valid id with leading zeros' => ['00064581', true];
+        yield 'active subject with a wrong check digit' => ['00123562', false];
+        yield 'another active subject with a wrong check digit' => ['29340042', false];
+        yield 'all zeros' => ['00000000', false];
+        yield 'wrong checksum' => ['12345678', false];
+    }
+
+    #[DataProvider('provideCheckDigitResults')]
+    public function testHasValidCheckDigitReportsWhetherTheCheckDigitMatches(string $input, bool $expected): void
+    {
+        self::assertSame($expected, CompanyId::fromRegister($input)->hasValidCheckDigit());
+    }
+
+    public function testParsedIdAlwaysHasAValidCheckDigit(): void
+    {
+        self::assertTrue(CompanyId::parse('45274649')->hasValidCheckDigit());
+    }
+
+    public function testParseStaysStrictForAnIdThatFromRegisterAccepts(): void
+    {
+        $this->expectException(InvalidInput::class);
+
+        CompanyId::parse('00123562');
+    }
+
+    public function testTryParseStaysStrictForAnIdThatFromRegisterAccepts(): void
+    {
+        self::assertNull(CompanyId::tryParse('29340042'));
+    }
+
+    public function testIdFromRegisterEqualsTheSameValueWhateverFormItWasGivenIn(): void
+    {
+        self::assertTrue(CompanyId::fromRegister('123562')->equals(CompanyId::fromRegister('00123562')));
+        self::assertTrue(CompanyId::fromRegister('45274649')->equals(CompanyId::parse('45274649')));
+    }
+
+    public function testStringRepresentationOfAnIdFromRegisterIsTheEightDigitValue(): void
+    {
+        self::assertSame('00123562', (string) CompanyId::fromRegister('123562'));
+    }
+
     public function testValueObjectCannotBeConstructedDirectly(): void
     {
         $constructor = (new \ReflectionClass(CompanyId::class))->getConstructor();

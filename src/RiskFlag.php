@@ -13,15 +13,16 @@ enum RiskFlag
     case Dissolved;
 
     /**
-     * The name ends with "v likvidaci" (case-insensitive, any whitespace between the words, trailing quotes, dots or spaces ignored).
-     * The phrase before the legal form ("… v likvidaci, s.r.o.") is not recognised.
+     * The name contains the standalone phrase "v likvidaci" anywhere (case-insensitive, any whitespace between the words),
+     * bounded by the start or end, whitespace, quotes (also ´ and ` that ARES writes for quotes), a comma, a dot,
+     * parentheses, a slash or a dash.
      */
     case InLiquidation;
 
     /** ARES Insolvency is Active: the subject has a record in the insolvency register, possibly a closed one. */
     case InsolvencyRecord;
 
-    /** The VAT register marks the subject as an unreliable payer. */
+    /** The VAT register marks a VAT payer or VAT group as unreliable; an unreliable person gets UnreliablePerson only. */
     case UnreliableVatPayer;
 
     /** The VAT register keeps the subject as an unreliable person. */

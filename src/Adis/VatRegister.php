@@ -25,7 +25,8 @@ interface VatRegister
     public function find(VatId|string $vatId): ?VatSubject;
 
     /**
-     * Duplicates are removed and the VAT ids are sent in batches of 100; an empty list makes no request.
+     * Duplicates are removed and the VAT ids are sent in batches of 100; an empty list makes no request. Batches
+     * may be sent concurrently, up to the client's `maxConcurrency`; the result order is the sequential order.
      * Returns a collection rather than an array keyed by VAT id, so that has()/get()/missing() normalise
      * any VAT id form. A VAT id is always a string, never an int.
      *
@@ -41,7 +42,8 @@ interface VatRegister
     public function findMany(array $vatIds): VatSubjects;
 
     /**
-     * The whole list of unreliable VAT payers.
+     * The whole list of unreliable VAT payers. It also contains unreliable persons, who are not VAT payers;
+     * the list does not carry the subject type, only findMany() tells them apart.
      *
      * @return list<UnreliablePayer>
      *

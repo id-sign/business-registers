@@ -1,0 +1,16 @@
+{
+  "countryCode" : "ES",
+  "vatNumber" : "A15075062",
+  "requestDate" : "2026-10-04T15:34:53.673Z",
+  "valid" : true,
+  "requestIdentifier" : "",
+  "name" : "---",
+  "address" : "---",
+  "traderName" : "INDUSTRIA DE DISEÑO TEXTIL, S.A.",
+  "traderCity" : "ARTEIXO",
+  "traderNameMatch" : "VALID",
+  "traderStreetMatch" : "NOT_PROCESSED",
+  "traderPostalCodeMatch" : "NOT_PROCESSED",
+  "traderCityMatch" : "VALID",
+  "traderCompanyTypeMatch" : "NOT_PROCESSED"
+}

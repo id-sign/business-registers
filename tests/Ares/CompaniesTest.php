@@ -97,6 +97,54 @@ final class CompaniesTest extends TestCase
         self::assertSame($expectedId, $companies->get($id)?->id?->value);
     }
 
+    private static function withCheckDigitMismatch(): Companies
+    {
+        return new Companies([
+            CompanyFactory::create(id: CompanyId::fromRegister('00123562'), name: 'Zemědělské družstvo'),
+            CompanyFactory::create(id: '45317054', name: 'Komerční banka, a.s.'),
+        ]);
+    }
+
+    public function testGetAndHasFindACompanyWhoseIdFailsTheCheckDigitByItsCompanyId(): void
+    {
+        $companies = self::withCheckDigitMismatch();
+        $id = CompanyId::fromRegister('00123562');
+
+        self::assertTrue($companies->has($id));
+        self::assertSame('Zemědělské družstvo', $companies->get($id)?->name);
+    }
+
+    public function testMissingTakesACompanyIdThatFailsTheCheckDigitAsItIs(): void
+    {
+        $companies = self::withCheckDigitMismatch();
+        $unknown = CompanyId::fromRegister('29340042');
+
+        self::assertSame([], $companies->missing([CompanyId::fromRegister('123562')]));
+        self::assertEquals([$unknown], $companies->missing([CompanyId::fromRegister('00123562'), $unknown]));
+    }
+
+    public function testStringLookupOfAnIdThatFailsTheCheckDigitStaysStrict(): void
+    {
+        $companies = self::withCheckDigitMismatch();
+
+        $lookups = [
+            static fn () => $companies->get('00123562'),
+            static fn () => $companies->has('00123562'),
+            static fn () => $companies->missing(['00123562']),
+        ];
+
+        $rejected = 0;
+        foreach ($lookups as $lookup) {
+            try {
+                $lookup();
+            } catch (InvalidInput) {
+                ++$rejected;
+            }
+        }
+
+        self::assertSame(\count($lookups), $rejected);
+    }
+
     /**
      * @return iterable<string, array{CompanyId|string}>
      */
