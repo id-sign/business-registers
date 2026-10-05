@@ -32,8 +32,9 @@ lower `maxConcurrency`. In Symfony register the clients and bind each interface 
 ## Facade or single client
 
 - Facade `CompanyLookup`: a profile for one IČO (ARES plus optional ADIS and VIES sections, risk flags), or
-  `byCompanyIds()` for a list (1 ARES + 1 ADIS request per 100 IČO; VIES one `check()` per company, sequential: 100
-  companies with `Vies` take minutes). Use it for "everything about these companies" with tolerance to an outage.
+  `byCompanyIds()` for a list (1 ARES + 1 ADIS request per 100 IČO; VIES one `check()` per distinct lookup DIČ,
+  sequential, a requester rejection stops VIES for the rest of the call: 100 companies with `Vies` take minutes). Use
+  it for "everything about these companies" with tolerance to an outage.
 - Single client: bulk checks (`findMany`), search, the list of unreliable payers, a bank account check without ARES,
   VIES for a foreign VAT id.
 

@@ -15,6 +15,7 @@ use IdSign\BusinessRegisters\Exception\ServiceUnavailable;
 use IdSign\BusinessRegisters\Internal\Identifiers;
 use IdSign\BusinessRegisters\Internal\ListElement;
 use IdSign\BusinessRegisters\Vies\Vies;
+use IdSign\BusinessRegisters\Vies\ViesResult;
 
 /**
  * Assembles a company profile from ARES and the requested sections; an outage of a section source
@@ -23,6 +24,8 @@ use IdSign\BusinessRegisters\Vies\Vies;
  */
 final readonly class CompanyLookup
 {
+    private const string REQUESTER_REJECTED = 'INVALID_REQUESTER_INFO';
+
     /**
      * @param ?VatId $viesRequester own VAT id passed to VIES, so that it issues a consultation number
      */
@@ -53,7 +56,12 @@ final readonly class CompanyLookup
             return null;
         }
 
-        return $this->profile($company, $requested, fn (VatId $vatId): ?VatSubject => $this->vatRegister()->find($vatId));
+        return $this->profile(
+            $company,
+            $requested,
+            fn (VatId $vatId): ?VatSubject => $this->vatRegister()->find($vatId),
+            fn (VatId $vatId): ViesResult => $this->vies()->check($vatId, $this->viesRequester),
+        );
     }
 
     /**
@@ -64,8 +72,13 @@ final readonly class CompanyLookup
      * Company::vatLookupId() values, so 100 ids with Vat are one ARES and one ADIS request. An ADIS
      * outage or invalid response makes Vat Unavailable, an ADIS rejection makes it Rejected, for every
      * company of that call; a non-Czech lookup id is not sent and makes that company's Vat Rejected.
-     * Section Vies is asked sequentially, one check() per company with a lookup id, so 100 companies
-     * with Vies take minutes.
+     * Section Vies is asked sequentially, one check() per distinct Company::vatLookupId() (a VAT group is
+     * checked once for all its members), and the outcome, result or exception, is shared by every company
+     * with that lookup id, so 100 companies with Vies still take minutes. After VIES rejects the requester
+     * (InvalidInput with errorCode INVALID_REQUESTER_INFO) no further check() is made in that call: every
+     * company whose lookup id was not yet answered gets Vies Rejected with that same exception instance,
+     * while a company whose lookup id was already answered keeps that answer. Any other VIES failure
+     * affects only the companies with that lookup id.
      *
      * @param list<CompanyId|string> $ids
      *
@@ -117,9 +130,38 @@ final readonly class CompanyLookup
             return $subjects->get($vatId);
         };
 
+        /** @var array<string, ViesResult|InvalidInput|ServiceUnavailable|InvalidResponse> $answers */
+        $answers = [];
+        /** @var ?InvalidInput $rejection */
+        $rejection = null;
+        $checkVies = function (VatId $vatId) use (&$answers, &$rejection): ViesResult {
+            $key = (string) $vatId;
+            if (!isset($answers[$key])) {
+                if (null !== $rejection) {
+                    throw $rejection;
+                }
+
+                try {
+                    $answers[$key] = $this->vies()->check($vatId, $this->viesRequester);
+                } catch (ServiceUnavailable|InvalidResponse|InvalidInput $e) {
+                    $answers[$key] = $e;
+                    if ($e instanceof InvalidInput && self::REQUESTER_REJECTED === $e->errorCode) {
+                        $rejection = $e;
+                    }
+                }
+            }
+
+            $answer = $answers[$key];
+            if ($answer instanceof \Throwable) {
+                throw $answer;
+            }
+
+            return $answer;
+        };
+
         $profiles = [];
         foreach ($companies as $company) {
-            $profiles[] = $this->profile($company, $requested, $findVat);
+            $profiles[] = $this->profile($company, $requested, $findVat, $checkVies);
         }
 
         return new CompanyProfiles($profiles);
@@ -152,8 +194,9 @@ final readonly class CompanyLookup
     /**
      * @param array<string, Section>       $requested
      * @param \Closure(VatId): ?VatSubject $findVat   answers section Vat for a lookup id
+     * @param \Closure(VatId): ViesResult  $checkVies answers section Vies for a lookup id
      */
-    private function profile(Company $company, array $requested, \Closure $findVat): CompanyProfile
+    private function profile(Company $company, array $requested, \Closure $findVat, \Closure $checkVies): CompanyProfile
     {
         $vatLookupId = $company->vatLookupId();
         $vat = null;
@@ -173,7 +216,7 @@ final readonly class CompanyLookup
                         $statuses[$name] = null === $vat ? SectionStatus::NotFound : SectionStatus::Ok;
                         break;
                     case Section::Vies:
-                        $vies = $this->vies()->check($vatLookupId, $this->viesRequester);
+                        $vies = $checkVies($vatLookupId);
                         $statuses[$name] = SectionStatus::Ok;
                         break;
                 }

@@ -1174,6 +1174,218 @@ final class CompanyLookupTest extends TestCase
         self::assertNull($profile->vies);
     }
 
+    public function testBulkLookupAsksViesOnceForAVatGroupAndEveryMemberGetsTheSameResult(): void
+    {
+        $ids = [];
+        $companies = [];
+        for ($i = 1; $i <= 5; ++$i) {
+            $ico = \sprintf('%08d', 10000000 + $i);
+            $ids[] = CompanyId::fromRegister($ico);
+            $companies[] = self::bulkCompany(
+                CompanyId::fromRegister($ico),
+                1 === $i ? null : 'CZ'.$ico,
+                'CZ699001182',
+            );
+        }
+        $group = self::viesResult(vatId: 'CZ699001182');
+        $asked = self::callLog();
+        $lookup = new CompanyLookup(
+            $this->directoryFindingManyOnce($companies),
+            $this->bulkVatRegisterAskedFor(['CZ699001182'], [self::subject(SubjectType::VatGroup, 'CZ699001182')]),
+            $this->viesAnswering(['CZ699001182' => $group], $asked, 1),
+        );
+
+        $profiles = $lookup->byCompanyIds($ids, Section::Vat, Section::Vies);
+
+        self::assertCount(5, $profiles);
+        foreach ($profiles as $profile) {
+            self::assertSame(SectionStatus::Ok, $profile->status(Section::Vies));
+            self::assertSame($group, $profile->vies);
+        }
+        self::assertSame([['CZ699001182', null]], $asked->getArrayCopy());
+    }
+
+    /**
+     * @return iterable<string, array{\Throwable, SectionStatus}>
+     */
+    public static function provideSharedViesFailures(): iterable
+    {
+        yield 'capacity' => [new ServiceUnavailable('VIES is busy', Source::Vies, 'MS_MAX_CONCURRENT_REQ'), SectionStatus::Unavailable];
+        yield 'invalid response' => [new InvalidResponse('VIES answered garbage', Source::Vies), SectionStatus::Unavailable];
+        yield 'invalid input' => [new InvalidInput('VIES rejected the request', 'INVALID_INPUT'), SectionStatus::Rejected];
+    }
+
+    #[DataProvider('provideSharedViesFailures')]
+    public function testBulkLookupSharesAViesFailureAmongCompaniesWithTheSameLookupVatId(\Throwable $failure, SectionStatus $expected): void
+    {
+        $lookup = new CompanyLookup(
+            $this->directoryFindingMany([
+                self::bulkCompany('45274649', 'CZ699001182'),
+                self::bulkCompany('45317054', null, 'CZ699001182'),
+            ]),
+            null,
+            $this->viesAnswering(['CZ699001182' => $failure], self::callLog(), 1),
+        );
+
+        $profiles = $lookup->byCompanyIds(['45274649', '45317054'], Section::Vies);
+
+        foreach ($profiles as $profile) {
+            self::assertSame($expected, $profile->status(Section::Vies));
+            self::assertSame($failure, $profile->error(Section::Vies));
+            self::assertNull($profile->vies);
+        }
+    }
+
+    public function testBulkLookupStopsAskingViesAfterARequesterRejectionAndRejectsTheRemainingCompanies(): void
+    {
+        $requester = VatId::parse('CZ12345678');
+        $answered = self::viesResult();
+        $rejection = new InvalidInput('VIES rejected the request', 'INVALID_REQUESTER_INFO');
+        $asked = self::callLog();
+        $lookup = new CompanyLookup(
+            $this->directoryFindingMany([
+                self::bulkCompany('45274649', 'CZ45274649'),
+                self::bulkCompany('28255933', 'CZ28255933'),
+                self::bulkCompany('26168685', 'CZ45274649'),
+                self::bulkCompany('27082440', 'CZ27082440'),
+                self::bulkCompany('45317054', 'DE123456789'),
+            ]),
+            null,
+            $this->viesAnswering(['CZ45274649' => $answered, 'CZ28255933' => $rejection], $asked, 2),
+            $requester,
+        );
+
+        $profiles = $lookup->byCompanyIds(['45274649', '28255933', '26168685', '27082440', '45317054'], Section::Vies);
+
+        self::assertSame([['CZ45274649', 'CZ12345678'], ['CZ28255933', 'CZ12345678']], $asked->getArrayCopy());
+        $first = $profiles->get('45274649');
+        self::assertNotNull($first);
+        self::assertSame(SectionStatus::Ok, $first->status(Section::Vies));
+        self::assertSame($answered, $first->vies);
+        $sameVatId = $profiles->get('26168685');
+        self::assertNotNull($sameVatId);
+        self::assertSame(SectionStatus::Ok, $sameVatId->status(Section::Vies));
+        self::assertSame($answered, $sameVatId->vies);
+        self::assertNull($sameVatId->error(Section::Vies));
+        foreach (['28255933', '27082440', '45317054'] as $ico) {
+            $profile = $profiles->get($ico);
+            self::assertNotNull($profile);
+            self::assertSame(SectionStatus::Rejected, $profile->status(Section::Vies));
+            self::assertSame($rejection, $profile->error(Section::Vies));
+            self::assertNull($profile->vies);
+        }
+    }
+
+    public function testBulkLookupOfFiftyCompaniesWithARejectedRequesterIsOneViesRequest(): void
+    {
+        $ids = [];
+        $companies = [];
+        for ($i = 1; $i <= 50; ++$i) {
+            $ico = \sprintf('%08d', 10000000 + $i);
+            $ids[] = CompanyId::fromRegister($ico);
+            $companies[] = self::bulkCompany(CompanyId::fromRegister($ico), 'CZ'.$ico);
+        }
+        $rejection = new InvalidInput('VIES rejected the request', 'INVALID_REQUESTER_INFO');
+        $lookup = new CompanyLookup(
+            $this->directoryFindingMany($companies),
+            null,
+            $this->viesAnswering(['CZ10000001' => $rejection], self::callLog(), 1),
+            VatId::parse('CZ12345678'),
+        );
+
+        $profiles = $lookup->byCompanyIds($ids, Section::Vies);
+
+        self::assertCount(50, $profiles);
+        foreach ($profiles as $profile) {
+            self::assertSame(SectionStatus::Rejected, $profile->status(Section::Vies));
+            self::assertSame($rejection, $profile->error(Section::Vies));
+        }
+    }
+
+    /**
+     * @return iterable<string, array{\Throwable}>
+     */
+    public static function provideNonStoppingViesFailures(): iterable
+    {
+        yield 'invalid input' => [new InvalidInput('VIES rejected the request', 'INVALID_INPUT')];
+        yield 'invalid input without a code' => [new InvalidInput('VIES answered HTTP 400')];
+        yield 'capacity' => [new ServiceUnavailable('VIES is busy', Source::Vies, 'MS_MAX_CONCURRENT_REQ')];
+        yield 'capacity with the requester code' => [new ServiceUnavailable('VIES answered HTTP 500', Source::Vies, 'INVALID_REQUESTER_INFO')];
+        yield 'invalid response' => [new InvalidResponse('VIES answered garbage', Source::Vies)];
+    }
+
+    #[DataProvider('provideNonStoppingViesFailures')]
+    public function testBulkLookupAViesFailureOfOneVatIdDoesNotStopViesForTheOthers(\Throwable $failure): void
+    {
+        $ok = self::viesResult(vatId: 'CZ28255933');
+        $lookup = new CompanyLookup(
+            $this->directoryFindingMany([self::bulkCompany('45274649', 'CZ45274649'), self::bulkCompany('28255933', 'CZ28255933')]),
+            null,
+            $this->viesAnswering(['CZ45274649' => $failure, 'CZ28255933' => $ok], self::callLog(), 2),
+            VatId::parse('CZ12345678'),
+        );
+
+        $profiles = $lookup->byCompanyIds(['45274649', '28255933'], Section::Vies);
+
+        $second = $profiles->get('28255933');
+        self::assertNotNull($second);
+        self::assertSame(SectionStatus::Ok, $second->status(Section::Vies));
+        self::assertSame($ok, $second->vies);
+    }
+
+    public function testBulkLookupViesRequesterRejectionLeavesVatAndNotApplicableCompaniesUntouched(): void
+    {
+        $rejection = new InvalidInput('VIES rejected the request', 'INVALID_REQUESTER_INFO');
+        $lookup = new CompanyLookup(
+            $this->directoryFindingMany([
+                self::bulkCompany('45274649', 'CZ45274649'),
+                self::bulkCompany('28255933', 'CZ28255933'),
+                self::bulkCompany('27082440'),
+                self::bulkCompany('45317054', 'DE123456789'),
+            ]),
+            $this->bulkVatRegisterAskedFor(['CZ45274649', 'CZ28255933'], [self::subject(), self::subject(vatId: 'CZ28255933')]),
+            $this->viesAnswering(['CZ45274649' => $rejection], self::callLog(), 1),
+            VatId::parse('CZ12345678'),
+        );
+
+        $profiles = $lookup->byCompanyIds(['45274649', '28255933', '27082440', '45317054'], Section::Vat, Section::Vies);
+
+        foreach (['45274649', '28255933'] as $ico) {
+            $profile = $profiles->get($ico);
+            self::assertNotNull($profile);
+            self::assertSame(SectionStatus::Ok, $profile->status(Section::Vat));
+            self::assertSame(SectionStatus::Rejected, $profile->status(Section::Vies));
+            self::assertSame($rejection, $profile->error(Section::Vies));
+        }
+        $withoutVatId = $profiles->get('27082440');
+        self::assertNotNull($withoutVatId);
+        self::assertSame(SectionStatus::NotApplicable, $withoutVatId->status(Section::Vat));
+        self::assertSame(SectionStatus::NotApplicable, $withoutVatId->status(Section::Vies));
+        $foreign = $profiles->get('45317054');
+        self::assertNotNull($foreign);
+        self::assertSame(SectionStatus::Rejected, $foreign->status(Section::Vat));
+        self::assertNotSame($rejection, $foreign->error(Section::Vat));
+        self::assertSame(SectionStatus::Rejected, $foreign->status(Section::Vies));
+        self::assertSame($rejection, $foreign->error(Section::Vies));
+    }
+
+    public function testBulkLookupAsksViesAgainInTheNextCall(): void
+    {
+        $rejection = new InvalidInput('VIES rejected the request', 'INVALID_REQUESTER_INFO');
+        $lookup = new CompanyLookup(
+            $this->directoryFindingMany([self::bulkCompany('45274649', 'CZ45274649')]),
+            null,
+            $this->viesAnswering(['CZ45274649' => $rejection], self::callLog(), 2),
+            VatId::parse('CZ12345678'),
+        );
+
+        $first = $lookup->byCompanyIds(['45274649'], Section::Vies)->get('45274649');
+        $second = $lookup->byCompanyIds(['45274649'], Section::Vies)->get('45274649');
+
+        self::assertSame(SectionStatus::Rejected, $first?->status(Section::Vies));
+        self::assertSame(SectionStatus::Rejected, $second?->status(Section::Vies));
+    }
+
     public function testBulkLookupAdisOutageDoesNotAffectTheViesSection(): void
     {
         $outage = new ServiceUnavailable('ADIS is down', Source::Adis);

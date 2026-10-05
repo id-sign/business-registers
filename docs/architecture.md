@@ -103,8 +103,12 @@ interface and use it for test doubles.
   ARES returns; ids ARES does not hold are absent (`missing()`). Before any request it checks the section clients and
   every id (`Internal/ListElement`, then `Internal/Identifiers`: strings strict, `CompanyId` as it is). ARES is one
   `findMany()`; section `Vat` is one `VatRegister::findMany()` over the distinct Czech `Company::vatLookupId()` values;
-  `Vies` is one `check()` per company with a lookup id, sequentially. The facade does not chunk; the clients do.
+  `Vies` is one `check()` per distinct `Company::vatLookupId()`, sequentially, memoised for the call (result or
+  exception shared by the companies with that lookup id); after an `InvalidInput` with `errorCode`
+  `INVALID_REQUESTER_INFO` no further `check()` is sent and the remaining lookup ids get that same exception. The
+  facade does not chunk; the clients do.
 - The statuses follow `byCompanyId()` through one shared per-company step: no lookup id → `NotApplicable`; absent from
   the ADIS answer → `NotFound`. The ADIS call's `ServiceUnavailable` / `InvalidResponse` makes `Vat` `Unavailable`,
   its `InvalidInput` makes it `Rejected`, for every profile in the call; a non-Czech lookup id is not sent and makes
-  that profile's `Vat` `Rejected`. A VIES failure affects only that company. Only ARES exceptions propagate.
+  that profile's `Vat` `Rejected`. A VIES failure affects only the companies with that lookup id, except a requester
+  rejection, which stops VIES for the rest of the call. Only ARES exceptions propagate.

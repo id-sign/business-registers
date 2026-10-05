@@ -230,8 +230,8 @@ $lookup = new CompanyLookup($ares, $vatRegister, $vies, viesRequester: VatId::pa
 `CompanyLookup::byCompanyIds()` builds the profiles of a list of IČO with as few requests as possible: ARES is asked
 with one `findMany()`, section `Vat` with one ADIS `findMany()` over the companies' `vatLookupId()` values (a VAT group
 is asked once for all its members). 100 IČO with `Section::Vat` are 1 ARES and 1 ADIS request (both clients send
-batches of 100). VIES has no bulk call: `Section::Vies` makes one `check()` per company with a DIČ, one after another,
-so 100 companies with `Vies` take minutes.
+batches of 100). VIES has no bulk call: `Section::Vies` makes one `check()` per distinct lookup DIČ (a VAT group is
+checked once for all its members), one after another, so 100 companies with `Vies` take minutes.
 
 ```php
 use IdSign\BusinessRegisters\CompanyId;
@@ -250,7 +250,11 @@ foreach ($profiles->missing($requested) as $id) {   // list<CompanyId> — not h
 
 The statuses mean the same as for one company. If the ADIS call fails, `Vat` is `Unavailable` (outage, invalid
 response) or `Rejected` for every profile in that call; a company whose lookup DIČ is not Czech is not sent to ADIS
-and gets `Rejected`. A VIES failure affects only that company. Every IČO and the section clients are checked before
+and gets `Rejected`. A VIES outage or rejection affects only the companies with that lookup DIČ, which share the
+stored exception. Once VIES rejects the requester (`INVALID_REQUESTER_INFO`), no further VIES request is sent in that
+call: every company whose lookup DIČ was not yet checked gets `Rejected` with that same exception instance, whose
+message names the DIČ of the request that was rejected; a company whose lookup DIČ was already checked keeps that
+answer. The next call asks VIES again. Every IČO and the section clients are checked before
 the first request; ARES errors are thrown.
 
 #### Change tracking
