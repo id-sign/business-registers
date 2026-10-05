@@ -6,8 +6,8 @@
   `src/`; helpers live in `tests/Double/`.
 - PHPUnit fails on deprecations, notices, warnings and risky tests.
 - Fixtures with data of natural persons use a fictitious name and address. States that cannot be observed live (ADIS
-  status codes 1–3, `NESPOLEHLIVA_OSOBA`, ended accounts, some VIES error bodies) use hand-made fixtures that keep the
-  real envelope and attribute shapes.
+  status codes 1–3, ended accounts, some VIES error bodies) use hand-made fixtures that keep the real envelope and
+  attribute shapes.
 - Leak tests plant a sentinel string in a fixture and assert it never appears in an exception message.
 - Concurrency tests count open requests with `tests/Double/CountingHttpClient`, a `MockHttpClient` whose responses
   have a generator body: the generator runs on the first read, so `open` (raised when a request is issued, lowered in

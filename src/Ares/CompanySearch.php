@@ -16,7 +16,7 @@ final readonly class CompanySearch
      * @param ?int         $municipalityCode sidlo.kodObce
      * @param list<string> $legalFormCodes   pravniForma
      * @param list<string> $naceCodes        czNace
-     * @param list<string> $taxOfficeCodes   financniUrad
+     * @param list<string> $taxOfficeCodes   financniUrad: a workplace code (code list FinancniUrad, e.g. "293") or "013"; regional codes 451–464 match nothing
      * @param int          $limit            pocet
      * @param int          $offset           start (0 or greater)
      * @param list<string> $orderBy          razeni, e.g. ['obchodniJmeno'] or ['-ico']

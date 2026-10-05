@@ -78,8 +78,10 @@ interface and use it for test doubles.
 - Each section is asked once, in the order requested. A section's `ServiceUnavailable` or `InvalidResponse` becomes
   `SectionStatus::Unavailable`, its `InvalidInput` becomes `SectionStatus::Rejected` (retrying will not help); both
   store the exception for `error()`. Only ARES exceptions propagate.
-- ADIS and VIES are asked under `Company::vatLookupId()` (`groupVatId ?? vatId`): a VAT group member has no DIČ of its
-  own. A DIČ is never derived from an IČO. ADIS, not ARES, decides VAT payer status.
+- ADIS and VIES are asked under `Company::vatLookupId()` (`groupVatId ?? vatId`): ADIS answers for a VAT group member
+  under the group VAT id; in rare cases it still answers the member's own VAT id (which ARES may carry as a former one)
+  as a VAT payer too, and the facade asks the group only. A DIČ is never derived from an IČO. ADIS, not ARES, decides
+  VAT payer status.
 - `CompanyProfile`: `status()`, `error()`, `isComplete()` (no section `Unavailable` or `Rejected`), `flags()`,
   `hasFlag()`. Flags are computed only from sections in status `Ok` plus the ARES base; an absent flag means "clean"
   only on a complete profile with the section requested.

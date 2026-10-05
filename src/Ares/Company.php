@@ -26,7 +26,7 @@ final readonly class Company
      * @param ?string      $legalFormCode        ARES code list value, e.g. "121"
      * @param ?VatId       $vatId                own VAT id; a filled value does not mean a VAT payer
      * @param ?VatId       $groupVatId           VAT id of the VAT group the subject is a member of
-     * @param ?string      $taxOfficeCode        three digits, e.g. "013"
+     * @param ?string      $taxOfficeCode        ARES financniUrad: workplace (code list FinancniUrad, three digits, e.g. "293" Územní pracoviště Brno-venkov) or "013" Specialised Tax Office; equal to the ADIS code of VatSubject only for Specialised Tax Office subjects, do not compare
      * @param list<string> $deliveryAddressLines filled lines of the delivery address only
      * @param list<string> $naceCodes            CZ-NACE 2025
      * @param list<string> $naceCodes2008        CZ-NACE 2008
@@ -55,8 +55,9 @@ final readonly class Company
     }
 
     /**
-     * Whether the legal form is one of a natural person (self-employed person, natural person in the commercial
-     * register, or an enterprise or branch of a foreign natural person).
+     * Whether the legal form is one of a natural person: the self-employed forms 101–108, the domestic self-employed
+     * natural person 100 (in source rzp also a non-entrepreneur natural person), or an enterprise or branch of a
+     * foreign natural person (424, 425).
      */
     public function isNaturalPerson(): bool
     {

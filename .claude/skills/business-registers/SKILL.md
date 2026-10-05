@@ -66,8 +66,8 @@ new CompanySearch(name:, address:, municipalityCode:, legalFormCodes:, naceCodes
 // >= 1 criterion, limit 1–1 000, offset >= 0 — otherwise InvalidInput before any request
 
 // Ares\Company (readonly): aresId, id (?CompanyId), name, legalFormCode, vatId (?VatId), groupVatId (?VatId),
-// taxOfficeCode, seat (?Address), deliveryAddressLines, establishedOn, dissolvedOn, updatedOn (?DateTimeImmutable),
-// naceCodes, naceCodes2008, fileNumber, primarySource, registrations
+// taxOfficeCode (ARES financniUrad: workplace or 013 Specialised Tax Office), seat (?Address), deliveryAddressLines,
+// establishedOn, dissolvedOn, updatedOn (?DateTimeImmutable), naceCodes, naceCodes2008, fileNumber, primarySource, registrations
 $company->vatLookupId(): ?VatId          // groupVatId ?? vatId: the ONLY id to send to ADIS and VIES
 $company->isNaturalPerson(): bool        // legal forms 100, 101-108, 424, 425
 $company->isDissolved(?DateTimeImmutable $on = null): bool   // dissolvedOn <= $on's calendar day; default today, Europe/Prague
@@ -80,11 +80,12 @@ missing(array $requested): list<CompanyId> | list<VatId>      // requested ids t
 // Adis\VatRegister
 find(VatId|string $vatId): ?VatSubject      // string without country = CZ; non-CZ -> InvalidInput
 findMany(array $vatIds): Adis\VatSubjects
-unreliablePayers(): list<Adis\UnreliablePayer>   // vatId, since, taxOfficeCode; ~4 300 entries, 500 kB
+unreliablePayers(): list<Adis\UnreliablePayer>   // vatId, since, taxOfficeCode (ADIS cisloFu: office 451–464 or 013); ~4 300 entries, 500 kB
                                                  // only some unreliable persons, not reliably marked identified persons; no type;
                                                  // to screen for UnreliablePerson use find()/findMany() or the facade
 
-// Adis\VatSubject (readonly): vatId, type (SubjectType), unreliable, unreliableSince, taxOfficeCode, name, address,
+// Adis\VatSubject (readonly): vatId, type (SubjectType), unreliable, unreliableSince,
+// taxOfficeCode (ADIS cisloFu: regional office 451–464 or 013), name, address,
 // bankAccounts (all, incl. ended), checkedAt
 $s->isVatPayer(): bool                   // VatPayer or VatGroup
 $s->activeBankAccounts(): list<BankAccount>      // BankAccount: prefix, number, bankCode, publishedFrom, publishedUntil
@@ -99,7 +100,7 @@ check(VatId|string $vatId, VatId|string|null $requester = null, ?Vies\TraderDeta
 // Value types
 CompanyId::parse(string): CompanyId        // ' 452 746 49 ', '64581' -> '00064581'; checksum; InvalidInput
 CompanyId::tryParse(string): ?CompanyId    // ->value (8 digits), equals(), (string)
-CompanyId::fromRegister(string): CompanyId // format only, no checksum: an IČO ARES uses although it fails it
+CompanyId::fromRegister(string): CompanyId // format only, no checksum: an IČO ARES uses although it fails it; also for ids stored from ARES
 $id->hasValidCheckDigit(): bool            // false for register ids such as '00123562', '29340042'
 VatId::parse(string, ?string $defaultCountry = null): VatId
 // ->countryCode, ->number, isCzech(), equals(), (string) 'CZ45274649'; GR -> EL
@@ -147,8 +148,15 @@ Address: text, street, streetName, houseNumber, houseNumberType, orientationNumb
 **ARES is a pointer, not an answer.**
 - A filled `vatId` does not make a VAT payer; ADIS decides (`SubjectType::VatPayer` / `VatGroup`). ARES `Vat = Active`
   also covers identified persons.
-- A VAT group member has `vatId === null` and a `groupVatId`; ask ADIS/VIES with `vatLookupId()`.
-- Never derive a DIČ from an IČO. Natural persons have ten-digit DIČ.
+- A VAT group member has a `groupVatId`; its `vatId` is `null` or its former own DIČ (ARES `Vat = Dissolved` or
+  `Nonexistent`). Ask ADIS/VIES with `vatLookupId()` (`groupVatId ?? vatId`), never with `vatId`; ADIS answers for the
+  group, rarely still for the member's own DIČ too, and the facade asks the group only.
+- Never derive a DIČ from an IČO. Natural persons have a nine- or ten-digit DIČ: the birth number (nine digits for
+  births before 1954) or a nine-digit number assigned by the tax administrator (starts with 6). A derived DIČ of a group
+  member is usually not found in ADIS.
+- `Company::$taxOfficeCode` (ARES `financniUrad`: workplace or `013`) and `VatSubject`/`UnreliablePayer::$taxOfficeCode`
+  (ADIS `cisloFu`: regional office 451–464 or `013`) are codes of the same list `FinancniUrad`; equal only for
+  Specialised Tax Office subjects, never compare them across sources.
 - `Insolvency = Active` can be a closed proceeding; `Bankruptcy` (CEÚ) is useless for insolvency.
 - 404 / `null` = "not in ARES", usually also for deleted subjects. A subject without IČO has `id === null` and an
   `aresId` like `ARES_########`.
@@ -167,15 +175,19 @@ official way to verify a Spanish trader.
 ## Identifiers
 
 - IČO and DIČ are **strings, never int**: store IČO as `CHAR(8)`/`VARCHAR(8)`, edit with Symfony `TextType`, keep string
-  DTO properties. The library accepts `CompanyId|string` / `VatId|string` only; an int or other type in an id list is
-  `InvalidInput`. Cast a legacy INT column at the boundary (better: migrate it).
+  DTO properties. A single id parameter is `CompanyId|string` / `VatId|string` (an int is a `TypeError` under
+  `strict_types`, coerced to a string without it); an int or other type in an id list is `InvalidInput`. Cast a legacy
+  INT column at the boundary (better: migrate it).
 - Bulk results are collections, not arrays keyed by id: PHP turns digit-only keys into ints, and a non-normalised
   key would report an existing company as missing. Look up with `get()`/`has()` in any id form; find deleted or
   unknown ids with `$companies->missing($requestedIds)`. An invalid id there is `InvalidInput`, not "missing".
-- `all()` and iteration follow ARES response order, not request order.
+- `all()` and iteration follow ARES response order, not request order: each batch of 100 ascending by IČO, batches in
+  request order, no global order.
 - A string id is validated strictly (check digit included) everywhere; a `CompanyId` object is taken as it is.
-  `$company->id` from ARES may fail the check digit (active subjects do); look such a subject up with
-  `CompanyId::fromRegister()` or the `CompanyId` from an earlier response, never by re-parsing its string.
+  `$company->id` from ARES may fail the check digit (active subjects do: `00123562`), and one such string fails a whole
+  `findMany()` / `byCompanyIds()` call before any request. Re-hydrate ids stored from ARES with
+  `CompanyId::fromRegister()` (or keep the `CompanyId` object); `parse()` and plain strings are for user input only —
+  never re-parse a register id's string.
 
 ## Exceptions (all implement `Exception\ExceptionInterface`)
 
@@ -228,10 +240,11 @@ if (null === $profile) { /* unknown or deleted company */ }
 $payer = $profile->isVatPayer();                       // true / false / null (unknown, retry)
 if (!$profile->isComplete()) { /* a section Unavailable/Rejected: do not trust absent flags */ }
 
-$companies = $ares->findMany($icosFromDb);             // list<string>
-foreach ($companies->missing($icosFromDb) as $id) { /* not in ARES any more */ }
+$requested = array_map(CompanyId::fromRegister(...), $icosFromDb);   // stored from $company->id; parse() is for user input only
+$companies = $ares->findMany($requested);
+foreach ($companies->missing($requested) as $id) { /* not in ARES any more */ }
 
-$profiles = $lookup->byCompanyIds($icosFromDb, Section::Vat);   // CompanyProfiles, never an array keyed by IČO
+$profiles = $lookup->byCompanyIds($requested, Section::Vat);   // CompanyProfiles, never an array keyed by IČO
 ```
 
 ## Testing

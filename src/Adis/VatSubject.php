@@ -16,7 +16,7 @@ final readonly class VatSubject
     /**
      * @param bool                $unreliable      raw ADIS nespolehlivyPlatce; also true for an unreliable person (not a VAT payer) and for an identified person the register marks unreliable
      * @param ?\DateTimeImmutable $unreliableSince date the unreliability was published
-     * @param ?string             $taxOfficeCode   three digits, e.g. "013"
+     * @param ?string             $taxOfficeCode   ADIS cisloFu: regional office 451–464 (e.g. "461" Finanční úřad pro Jihomoravský kraj) or "013" Specialised Tax Office (code list FinancniUrad); equal to Company::$taxOfficeCode only for Specialised Tax Office subjects, do not compare
      * @param list<BankAccount>   $bankAccounts    all published accounts, including ended ones
      * @param \DateTimeImmutable  $checkedAt       date the register generated the answer
      */

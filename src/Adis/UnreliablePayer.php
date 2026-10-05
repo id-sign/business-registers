@@ -13,7 +13,7 @@ final readonly class UnreliablePayer
 {
     /**
      * @param ?\DateTimeImmutable $since         date the unreliability was published
-     * @param ?string             $taxOfficeCode three digits, e.g. "013"
+     * @param ?string             $taxOfficeCode ADIS cisloFu: regional office 451–464 (e.g. "461" Finanční úřad pro Jihomoravský kraj) or "013" Specialised Tax Office (code list FinancniUrad); equal to Company::$taxOfficeCode only for Specialised Tax Office subjects, do not compare
      */
     public function __construct(
         public VatId $vatId,
