@@ -10,11 +10,13 @@ use IdSign\BusinessRegisters\Adis\SubjectType;
 use IdSign\BusinessRegisters\Adis\VatSubject;
 use IdSign\BusinessRegisters\Ares\AresRegister;
 use IdSign\BusinessRegisters\Ares\Company;
+use IdSign\BusinessRegisters\Ares\Internal\CompanyMapper;
 use IdSign\BusinessRegisters\Ares\RegistrationStatus;
 use IdSign\BusinessRegisters\CompanyProfile;
 use IdSign\BusinessRegisters\Exception\ExceptionInterface;
 use IdSign\BusinessRegisters\Exception\InvalidInput;
 use IdSign\BusinessRegisters\Exception\ServiceUnavailable;
+use IdSign\BusinessRegisters\Internal\JsonReader;
 use IdSign\BusinessRegisters\RiskFlag;
 use IdSign\BusinessRegisters\Section;
 use IdSign\BusinessRegisters\SectionStatus;
@@ -292,6 +294,17 @@ final class CompanyProfileTest extends TestCase
         self::assertTrue($profile->hasFlag(RiskFlag::Dissolved));
     }
 
+    public function testDissolvedFlagIsNotRaisedForAScheduledDissolutionInTheFuture(): void
+    {
+        $company = CompanyMapper::map(JsonReader::fromJson(FixtureLoader::read('Ares/find-future-dissolution.json'), Source::Ares));
+        $profile = self::profile($company);
+
+        // The recorded date flips to the past in December 2035, on purpose.
+        self::assertSame('2035-12-10', $company->dissolvedOn?->format('Y-m-d'));
+        self::assertFalse($profile->hasFlag(RiskFlag::Dissolved));
+        self::assertSame([], $profile->flags());
+    }
+
     public function testDissolvedFlagIsNotRaisedWithoutADissolutionDate(): void
     {
         self::assertFalse(self::profile(CompanyFactory::create(dissolvedOn: null))->hasFlag(RiskFlag::Dissolved));
@@ -418,9 +431,21 @@ final class CompanyProfileTest extends TestCase
         self::assertSame([RiskFlag::UnreliablePerson], $profile->flags());
     }
 
-    public function testUnreliableVatPayerFlagIsNotRaisedForAnUnreliableSubjectThatIsNotAPayer(): void
+    public function testUnreliableIdentifiedPersonIsFlaggedAsUnreliablePersonNotAsUnreliableVatPayer(): void
     {
-        $profile = self::profile(vat: self::subject(SubjectType::IdentifiedPerson, unreliable: true), statuses: self::vatOk());
+        $subjects = ResponseParser::parseSubjects(FixtureLoader::read('Adis/status-identified-person-unreliable.xml'));
+        self::assertCount(1, $subjects);
+        $profile = self::profile(vat: $subjects[0], statuses: self::vatOk());
+
+        self::assertSame(SubjectType::IdentifiedPerson, $subjects[0]->type);
+        self::assertTrue($subjects[0]->unreliable);
+        self::assertFalse($profile->isVatPayer());
+        self::assertSame([RiskFlag::UnreliablePerson], $profile->flags());
+    }
+
+    public function testUnreliableVatPayerFlagIsNotRaisedForAReliableIdentifiedPerson(): void
+    {
+        $profile = self::profile(vat: self::subject(SubjectType::IdentifiedPerson), statuses: self::vatOk());
 
         self::assertFalse($profile->hasFlag(RiskFlag::UnreliableVatPayer));
     }
@@ -485,6 +510,43 @@ final class CompanyProfileTest extends TestCase
         ]);
 
         self::assertSame($expected, self::profile($company)->hasFlag(RiskFlag::VatRegistrationEnded));
+    }
+
+    // The ADIS fixture is a real response; the ARES one is the real record of a subject whose ARES VAT registration lags the VAT register.
+    public function testVatRegistrationEndedFlagYieldsToAnOkVatSectionThatSaysThePayerIsAPayer(): void
+    {
+        $company = CompanyMapper::map(JsonReader::fromJson(FixtureLoader::read('Ares/find-vat-dissolved-payer.json'), Source::Ares));
+        $subjects = ResponseParser::parseSubjects(FixtureLoader::read('Adis/status-vat-dissolved-payer.xml'));
+        self::assertCount(1, $subjects);
+        $profile = self::profile($company, $subjects[0], statuses: self::vatOk());
+
+        self::assertSame(RegistrationStatus::Dissolved, $company->registrations->status(AresRegister::Vat));
+        self::assertTrue($profile->isVatPayer());
+        self::assertFalse($profile->hasFlag(RiskFlag::VatRegistrationEnded));
+    }
+
+    /**
+     * @return iterable<string, array{?SubjectType, ?SectionStatus, bool}> subject type of the attached VAT answer, Vat section status, flag expected
+     */
+    public static function provideVatRegistrationEndedWithAVatAnswer(): iterable
+    {
+        yield 'section not requested' => [null, null, true];
+        yield 'section not found' => [null, SectionStatus::NotFound, true];
+        yield 'section unavailable, payer attached' => [SubjectType::VatPayer, SectionStatus::Unavailable, true];
+        yield 'section rejected, payer attached' => [SubjectType::VatPayer, SectionStatus::Rejected, true];
+        yield 'ok, identified person' => [SubjectType::IdentifiedPerson, SectionStatus::Ok, true];
+        yield 'ok, vat payer' => [SubjectType::VatPayer, SectionStatus::Ok, false];
+        yield 'ok, vat group' => [SubjectType::VatGroup, SectionStatus::Ok, false];
+    }
+
+    #[DataProvider('provideVatRegistrationEndedWithAVatAnswer')]
+    public function testVatRegistrationEndedFlagDependsOnTheVatSectionOnlyWhenItIsOk(?SubjectType $type, ?SectionStatus $status, bool $expected): void
+    {
+        $company = CompanyFactory::create(statuses: [AresRegister::Vat->value => RegistrationStatus::Dissolved]);
+        $vat = null === $type ? null : self::subject($type, [self::account()]);
+        $statuses = null === $status ? [] : [Section::Vat->name => $status];
+
+        self::assertSame($expected, self::profile($company, $vat, statuses: $statuses)->hasFlag(RiskFlag::VatRegistrationEnded));
     }
 
     public function testNoPublishedBankAccountFlagIsRaisedForAPayerWithoutAnAccount(): void

@@ -91,6 +91,11 @@ interface and use it for test doubles.
   each side is absent or one of whitespace, a straight or typographic quote (`"'„“”‘’‚‛‟«»‹›`), the ARES quote
   substitutes `´` and `` ` ``, `,`, `.`, `(`, `)`, `/` or a dash (`\p{Pd}`); "vlikvidaci" and "Kov likvidaci" stay
   unmatched. `RiskFlag::InsolvencyRecord` comes from ARES `Insolvency = Active`, which can be a closed proceeding.
+- `RiskFlag::Dissolved` is `Company::isDissolved()`: `dissolvedOn` not after today at midnight Europe/Prague. It is the
+  only place the library reads the clock; the optional `$on` keeps tests deterministic. `UnreliableVatPayer` is
+  `nespolehlivyPlatce` on a payer or group (`isVatPayer()`); `UnreliablePerson` is type `UnreliablePerson` or
+  `nespolehlivyPlatce` on an identified person. `VatRegistrationEnded` is ARES-derived
+  and yields only to an `Ok` section `Vat` whose subject `isVatPayer()`.
 - A profile with stored exceptions is not guaranteed to be `serialize()`-able; consumers snapshot the DTOs.
 - `CompanyLookup::byCompanyIds($ids, Section ...$sections)` returns `CompanyProfiles` in the order of the `Companies`
   ARES returns; ids ARES does not hold are absent (`missing()`). Before any request it checks the section clients and

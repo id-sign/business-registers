@@ -1,0 +1,82 @@
+{
+  "ico": "72396067",
+  "obchodniJmeno": "Jan Testovací",
+  "sidlo": {
+    "textovaAdresa": "Fiktivní 12, Králův Dvůr, 26701 Králův Dvůr",
+    "standardizaceAdresy": false
+  },
+  "pravniForma": "105",
+  "pravniFormaRos": "100",
+  "financniUrad": "026",
+  "datumVzniku": "2010-12-10",
+  "datumZaniku": "2035-12-10",
+  "datumAktualizace": "2025-05-12",
+  "icoId": "72396067",
+  "adresaDorucovaci": {},
+  "czNace2008": [
+    "35110"
+  ],
+  "seznamRegistraci": {
+    "stavZdrojeRos": "AKTIVNI",
+    "stavZdrojeVr": "NEEXISTUJICI",
+    "stavZdrojeRes": "AKTIVNI",
+    "stavZdrojeRzp": "NEEXISTUJICI",
+    "stavZdrojeNrpzs": "NEEXISTUJICI",
+    "stavZdrojeRpsh": "NEEXISTUJICI",
+    "stavZdrojeRcns": "NEEXISTUJICI",
+    "stavZdrojeSzr": "NEEXISTUJICI",
+    "stavZdrojeDph": "NEEXISTUJICI",
+    "stavZdrojeSkDph": "NEEXISTUJICI",
+    "stavZdrojeSd": "NEEXISTUJICI",
+    "stavZdrojeIr": "NEEXISTUJICI",
+    "stavZdrojeCeu": "NEEXISTUJICI",
+    "stavZdrojeRs": "NEEXISTUJICI",
+    "stavZdrojeRed": "NEEXISTUJICI",
+    "stavZdrojeMonitor": "NEEXISTUJICI"
+  },
+  "primarniZdroj": "ros",
+  "dalsiUdaje": [
+    {
+      "obchodniJmeno": [
+        {
+          "obchodniJmeno": "Jan Testovací",
+          "primarniZaznam": true
+        }
+      ],
+      "sidlo": [
+        {
+          "sidlo": {
+            "textovaAdresa": "Fiktivní 12, Králův Dvůr, 26701 Králův Dvůr",
+            "standardizaceAdresy": false
+          },
+          "primarniZaznam": true
+        }
+      ],
+      "pravniForma": "105",
+      "pravniFormaRos": "100",
+      "datovyZdroj": "res"
+    },
+    {
+      "obchodniJmeno": [
+        {
+          "obchodniJmeno": "Jan Testovací",
+          "primarniZaznam": true
+        }
+      ],
+      "sidlo": [
+        {
+          "sidlo": {
+            "textovaAdresa": "Fiktivní 12, Králův Dvůr, 26701 Králův Dvůr",
+            "standardizaceAdresy": false
+          },
+          "primarniZaznam": true
+        }
+      ],
+      "pravniFormaRos": "100",
+      "datovyZdroj": "ros"
+    }
+  ],
+  "czNace": [
+    "35120"
+  ]
+}

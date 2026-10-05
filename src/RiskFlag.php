@@ -9,7 +9,10 @@ namespace IdSign\BusinessRegisters;
  */
 enum RiskFlag
 {
-    /** ARES records a dissolution date. */
+    /**
+     * ARES records a dissolution date that is not after today (midnight Europe/Prague); see Company::isDissolved().
+     * A future date is a scheduled dissolution and raises nothing.
+     */
     case Dissolved;
 
     /**
@@ -22,13 +25,19 @@ enum RiskFlag
     /** ARES Insolvency is Active: the subject has a record in the insolvency register, possibly a closed one. */
     case InsolvencyRecord;
 
-    /** The VAT register marks a VAT payer or VAT group as unreliable; an unreliable person gets UnreliablePerson only. */
+    /** The VAT register marks a VAT payer or VAT group as unreliable (nespolehlivyPlatce): an unreliable VAT payer. */
     case UnreliableVatPayer;
 
-    /** The VAT register keeps the subject as an unreliable person. */
+    /**
+     * The subject is an unreliable person under §106aa of the VAT Act: the VAT register keeps it as an unreliable person,
+     * or marks a non-payer identified person as unreliable (nespolehlivyPlatce).
+     */
     case UnreliablePerson;
 
-    /** ARES Vat is Dissolved or Historical and the subject is not in an active VAT group. */
+    /**
+     * ARES Vat is Dissolved or Historical, the subject is not in an active VAT group, and an Ok VAT section does not say
+     * the subject is a VAT payer (ADIS decides; ARES can lag behind it).
+     */
     case VatRegistrationEnded;
 
     /** A VAT payer or VAT group without any active published bank account. */

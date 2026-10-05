@@ -42,8 +42,9 @@ interface VatRegister
     public function findMany(array $vatIds): VatSubjects;
 
     /**
-     * The whole list of unreliable VAT payers. It also contains unreliable persons, who are not VAT payers;
-     * the list does not carry the subject type, only findMany() tells them apart.
+     * The whole list of unreliable VAT payers. It holds only some unreliable persons and not reliably the
+     * identified persons the register marks unreliable, and it does not carry the subject type. To screen for
+     * unreliable persons use find() / findMany() or the facade.
      *
      * @return list<UnreliablePayer>
      *

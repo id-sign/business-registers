@@ -64,6 +64,19 @@ final readonly class Company
     }
 
     /**
+     * Whether the subject is dissolved on $on (default: today in Europe/Prague): dissolvedOn is set and not after $on,
+     * both compared as calendar days (each date in its own time zone). ARES carries a future dissolution date
+     * for active subjects (a scheduled dissolution) and usually answers 404 for a subject that has really been
+     * dissolved.
+     */
+    public function isDissolved(?\DateTimeImmutable $on = null): bool
+    {
+        $on ??= new \DateTimeImmutable('now', new \DateTimeZone('Europe/Prague'));
+
+        return null !== $this->dissolvedOn && $this->dissolvedOn->format('Y-m-d') <= $on->format('Y-m-d');
+    }
+
+    /**
      * The VAT id under which the subject is kept in the VAT register: the group VAT id for a VAT
      * group member, otherwise the own VAT id.
      */

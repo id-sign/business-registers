@@ -16,7 +16,7 @@ use PHPUnit\Framework\TestCase;
 #[CoversClass(Company::class)]
 final class CompanyTest extends TestCase
 {
-    private static function company(?string $legalFormCode = null, ?VatId $vatId = null, ?VatId $groupVatId = null): Company
+    private static function company(?string $legalFormCode = null, ?VatId $vatId = null, ?VatId $groupVatId = null, ?\DateTimeImmutable $dissolvedOn = null): Company
     {
         $statuses = [];
         foreach (AresRegister::cases() as $register) {
@@ -34,7 +34,7 @@ final class CompanyTest extends TestCase
             seat: null,
             deliveryAddressLines: [],
             establishedOn: null,
-            dissolvedOn: null,
+            dissolvedOn: $dissolvedOn,
             updatedOn: null,
             naceCodes: [],
             naceCodes2008: [],
@@ -87,5 +87,80 @@ final class CompanyTest extends TestCase
     public function testVatLookupIdIsNullWithoutAnyVatId(): void
     {
         self::assertNull(self::company()->vatLookupId());
+    }
+
+    private static function prague(string $datetime): \DateTimeImmutable
+    {
+        return new \DateTimeImmutable($datetime, new \DateTimeZone('Europe/Prague'));
+    }
+
+    /**
+     * @return iterable<string, array{?string, string, bool}> dissolvedOn, reference date, expected
+     */
+    public static function provideDissolutionDates(): iterable
+    {
+        yield 'no dissolution date' => [null, '2035-12-10', false];
+        yield 'dissolved the day before' => ['2035-12-09', '2035-12-10', true];
+        yield 'dissolved on the reference day' => ['2035-12-10', '2035-12-10', true];
+        yield 'dissolved on the reference day, reference with a time' => ['2035-12-10', '2035-12-10 15:00', true];
+        yield 'dissolution the day after' => ['2035-12-11', '2035-12-10', false];
+    }
+
+    #[DataProvider('provideDissolutionDates')]
+    public function testSubjectIsDissolvedWhenTheDissolutionDateIsNotAfterTheReferenceDate(?string $dissolvedOn, string $on, bool $expected): void
+    {
+        $company = self::company(dissolvedOn: null === $dissolvedOn ? null : self::prague($dissolvedOn));
+
+        self::assertSame($expected, $company->isDissolved(self::prague($on)));
+    }
+
+    /**
+     * @return iterable<string, array{string, bool}> time zone of the reference date, expected
+     */
+    public static function provideReferenceZones(): iterable
+    {
+        yield 'UTC' => ['UTC', true];
+        yield 'Asia/Tokyo, ahead of Prague' => ['Asia/Tokyo', true];
+        yield 'Pacific/Kiritimati, furthest ahead' => ['Pacific/Kiritimati', true];
+        yield 'America/Los_Angeles, behind Prague' => ['America/Los_Angeles', true];
+    }
+
+    #[DataProvider('provideReferenceZones')]
+    public function testReferenceDateIsACalendarDayWhateverItsTimeZone(string $zone, bool $expected): void
+    {
+        $company = self::company(dissolvedOn: self::prague('2035-12-10'));
+        $on = new \DateTimeImmutable('2035-12-10', new \DateTimeZone($zone));
+
+        self::assertSame($expected, $company->isDissolved($on));
+    }
+
+    /**
+     * @return iterable<string, array{string, string, bool}> time zone of the dissolution date, reference day, expected
+     */
+    public static function provideDissolutionZones(): iterable
+    {
+        yield 'UTC, behind Prague' => ['UTC', '2035-12-10', true];
+        yield 'America/Los_Angeles, far behind Prague' => ['America/Los_Angeles', '2035-12-10', true];
+        yield 'Asia/Tokyo, ahead of Prague' => ['Asia/Tokyo', '2035-12-10', true];
+        yield 'Asia/Tokyo, the day before in Prague' => ['Asia/Tokyo', '2035-12-09', false];
+    }
+
+    #[DataProvider('provideDissolutionZones')]
+    public function testDissolutionDateIsACalendarDayWhateverItsTimeZone(string $zone, string $on, bool $expected): void
+    {
+        $company = self::company(dissolvedOn: new \DateTimeImmutable('2035-12-10', new \DateTimeZone($zone)));
+
+        self::assertSame($expected, $company->isDissolved(self::prague($on)));
+    }
+
+    // The two tests below read the real clock; they flip in December 2035 on purpose.
+    public function testSubjectWithAPastDissolutionDateIsDissolvedToday(): void
+    {
+        self::assertTrue(self::company(dissolvedOn: self::prague('2020-01-31'))->isDissolved());
+    }
+
+    public function testSubjectWithAFutureDissolutionDateIsNotDissolvedToday(): void
+    {
+        self::assertFalse(self::company(dissolvedOn: self::prague('2035-12-10'))->isDissolved());
     }
 }

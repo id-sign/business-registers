@@ -132,16 +132,18 @@ final readonly class CompanyProfile
         $vies = SectionStatus::Ok === $this->status(Section::Vies) ? $this->vies : null;
 
         return match ($flag) {
-            RiskFlag::Dissolved => null !== $this->company->dissolvedOn,
+            RiskFlag::Dissolved => $this->company->isDissolved(),
             // The phrase stands anywhere in the name; on each side only the start/end, whitespace, a quote (with ARES's
             // ´ and ` substitutes), a comma, a dot, a parenthesis, a slash or a dash may touch it, so "vlikvidaci" or
             // "Kov likvidaci" do not match.
             RiskFlag::InLiquidation => 1 === preg_match('/(?<![^\s"\'„“”‘’‚‛‟«»‹›´`,.()\/\p{Pd}])v\s+likvidaci(?![^\s"\'„“”‘’‚‛‟«»‹›´`,.()\/\p{Pd}])/iu', $this->company->name),
             RiskFlag::InsolvencyRecord => $registrations->isActive(AresRegister::Insolvency),
             RiskFlag::UnreliableVatPayer => null !== $vat && $vat->unreliable && $vat->isVatPayer(),
-            RiskFlag::UnreliablePerson => SubjectType::UnreliablePerson === $vat?->type,
+            RiskFlag::UnreliablePerson => SubjectType::UnreliablePerson === $vat?->type
+                || (null !== $vat && $vat->unreliable && SubjectType::IdentifiedPerson === $vat->type),
             RiskFlag::VatRegistrationEnded => \in_array($registrations->status(AresRegister::Vat), [RegistrationStatus::Dissolved, RegistrationStatus::Historical], true)
-                && !$registrations->isActive(AresRegister::VatGroup),
+                && !$registrations->isActive(AresRegister::VatGroup)
+                && true !== $vat?->isVatPayer(),
             RiskFlag::NoPublishedBankAccount => null !== $vat && $vat->isVatPayer() && [] === $vat->activeBankAccounts(),
             RiskFlag::ViesInvalid => false === $vies?->valid,
         };
