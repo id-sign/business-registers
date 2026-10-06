@@ -29,6 +29,12 @@ interface and use it for test doubles.
   `Internal/ResponseParser` plus private envelope builders; VIES private methods of `ViesClient`.
 - Ids read from a response are built with `CompanyId::fromRegister()` (format only), because ARES lists active
   subjects whose IČO fails the check digit; ids the caller passes as strings go through the strict `parse()`.
+- A VAT id read from an ARES response (`dic`, `dicSkDph`) goes through the strict `VatId::parse($value, 'CZ')`, and a
+  value it rejects is an `InvalidResponse` for the whole response. The check is the format alone, never a check
+  digit: 8–10 digits after a `CZ` prefix or without a prefix, the generic pattern after another two-letter prefix. A
+  value with another prefix is read as that country's VAT id; the facade does not send it to ADIS (section `Vat`
+  `Rejected`) but does send it to VIES. A rejected value is no VAT id ADIS or VIES could be asked with. No such value
+  from ARES is known; a tolerant `VatId::fromRegister()` waits for a real example that shows what to accept.
 
 ## HTTP handling
 
