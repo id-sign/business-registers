@@ -1,0 +1,27 @@
+{
+    "name": "id-sign",
+    "owner": {
+        "name": "iD-SIGN s.r.o.",
+        "url": "https://github.com/id-sign"
+    },
+    "description": "Claude Code skills for the id-sign/business-registers PHP library.",
+    "plugins": [
+        {
+            "name": "business-registers",
+            "source": "./",
+            "description": "Skill for PHP projects that use id-sign/business-registers: Czech company lookup in ARES, VAT payer status in ADIS and EU VAT id validity in VIES.",
+            "category": "development",
+            "tags": [
+                "php",
+                "ares",
+                "vies",
+                "vat",
+                "czech"
+            ],
+            "strict": false,
+            "skills": [
+                "./.claude/skills/"
+            ]
+        }
+    ]
+}

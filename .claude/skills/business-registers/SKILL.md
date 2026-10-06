@@ -6,8 +6,8 @@ description: Typed PHP client for Czech business registers (ARES, VAT register A
 # business-registers (id-sign/business-registers v0.1.0)
 
 Stateless PHP 8.4+ library. It covers ARES (company identity), the VAT register ADIS (VAT payer, unreliable payer,
-published bank accounts) and VIES (EU VAT id validity). Register extracts, the insolvency register (ISIR) and ARES
-code lists are not available yet.
+published bank accounts) and VIES (EU VAT id validity). Not covered: register extracts, the insolvency register (ISIR),
+ARES code lists and the ARES change feed.
 
 ## Setup
 
@@ -19,7 +19,7 @@ $http = Symfony\Component\HttpClient\HttpClient::create();
 $ares = new IdSign\BusinessRegisters\Ares\AresClient($http);            // implements CompanyDirectory
 $vat = new IdSign\BusinessRegisters\Adis\VatRegisterClient($http);      // implements VatRegister
 $vies = new IdSign\BusinessRegisters\Vies\ViesClient($http);            // implements Vies
-$lookup = new IdSign\BusinessRegisters\CompanyLookup($ares, $vat, $vies, viesRequester: null);
+$lookup = new IdSign\BusinessRegisters\CompanyLookup($ares, $vat, $vies, viesRequester: null);  // ?VatId, see VIES
 ```
 
 Clients take optional `string $endpoint` and `float $timeout = 10.0`; `AresClient` and `VatRegisterClient` also
@@ -44,7 +44,8 @@ lower `maxConcurrency`. In Symfony register the clients and bind each interface 
 // CompanyLookup
 byCompanyId(CompanyId|string $id, Section ...$sections): ?CompanyProfile   // Section::Vat, Section::Vies
 byCompanyIds(array $ids, Section ...$sections): CompanyProfiles   // list<CompanyId|string>; same statuses; ids checked
-// before any request; a failed ADIS call marks Vat Unavailable/Rejected for all its profiles; non-CZ DIČ -> Rejected
+// before any request; a failed ADIS call makes Vat Unavailable for every profile asked in it; a non-CZ lookup DIČ is
+// not sent to ADIS -> Vat Rejected (VIES is still asked); no lookup DIČ -> NotApplicable
 
 // CompanyProfile (readonly): company, vat, vies, statuses, errors
 $profile->company;                      // Ares\Company
@@ -62,9 +63,10 @@ $profile->hasPublishedAccount(string $account): ?bool
 find(CompanyId|string $id): ?Company
 findMany(array $ids): Ares\Companies    // list<CompanyId|string>
 search(Ares\CompanySearch $q): Ares\CompanySearchResult   // ->total, ->companies (list<Company>)
-new CompanySearch(name:, address:, municipalityCode:, legalFormCodes:, naceCodes:, taxOfficeCodes:,
+new CompanySearch(name:, address:, municipalityCode: ?int, legalFormCodes:, naceCodes:, taxOfficeCodes:,
                   limit: 20, offset: 0, orderBy: [])
-// >= 1 criterion, limit 1–1 000, offset >= 0 — otherwise InvalidInput before any request
+// >= 1 criterion (a blank name/address does not count; any municipalityCode or non-empty code list does),
+// limit 1–1 000, offset >= 0 — otherwise InvalidInput before any request
 
 // Ares\Company (readonly): aresId, id (?CompanyId), name, legalFormCode, vatId (?VatId), groupVatId (?VatId),
 // taxOfficeCode (ARES financniUrad: workplace or 013 Specialised Tax Office), seat (?Address), deliveryAddressLines,
@@ -75,7 +77,8 @@ $company->isDissolved(?DateTimeImmutable $on = null): bool   // dissolvedOn <= $
 $company->registrations->status(Ares\AresRegister $r): Ares\RegistrationStatus   // also active(), isActive($r)
 
 // Ares\Companies, Adis\VatSubjects and CompanyProfiles (readonly, IteratorAggregate over values, Countable)
-get($id)    has($id): bool    all(): list<Company|VatSubject|CompanyProfile>    count()
+get($id): ?Company|?VatSubject|?CompanyProfile    has($id): bool    all(): list<…>    count()
+// ids in any form; VatSubjects reads a string as CZ and throws InvalidInput for a non-CZ id
 missing(array $requested): list<CompanyId> | list<VatId>      // requested ids that are absent
 
 // Adis\VatRegister
@@ -89,11 +92,15 @@ unreliablePayers(): list<Adis\UnreliablePayer>   // vatId, since, taxOfficeCode 
 // taxOfficeCode (ADIS cisloFu: regional office 451–464 or 013), name, address,
 // bankAccounts (all, incl. ended), checkedAt
 $s->isVatPayer(): bool                   // VatPayer or VatGroup
-$s->activeBankAccounts(): list<BankAccount>      // BankAccount: prefix, number, bankCode, publishedFrom, publishedUntil
-$s->hasPublishedAccount(string $account): bool   // active accounts only; domestic forms and Czech IBAN; garbage = false
+$s->activeBankAccounts(): list<BankAccount>      // BankAccount: prefix, number, bankCode, publishedFrom,
+                                                 // publishedUntil, isActive(), isStandard(), (string) "27-5868650297/0100"
+$s->hasPublishedAccount(string $account): bool   // active accounts only; a Czech account in any domestic form or as a
+                                                 // Czech IBAN; a non-standard one (e.g. foreign IBAN) literally,
+                                                 // case-insensitive; garbage = false
 
 // Vies\Vies
 check(VatId|string $vatId, VatId|string|null $requester = null, ?Vies\TraderDetails $trader = null): Vies\ViesResult
+// a string needs the country prefix (no CZ default): check('45274649') is InvalidInput
 // TraderDetails(name?, street?, postalCode?, city?, companyType?) — null and blank fields not sent, others unchanged
 // ViesResult: vatId, valid, name?, address?, nameMatch?, streetMatch?, postalCodeMatch?, cityMatch?,
 //             companyTypeMatch? (?MatchResult: Valid | Invalid | NotProcessed), consultationNumber?, checkedAt (UTC)
@@ -103,7 +110,7 @@ CompanyId::parse(string): CompanyId        // ' 452 746 49 ', '64581' -> '000645
 CompanyId::tryParse(string): ?CompanyId    // ->value (8 digits), equals(), (string)
 CompanyId::fromRegister(string): CompanyId // format only, no checksum: an IČO ARES uses although it fails it; also for ids stored from ARES
 $id->hasValidCheckDigit(): bool            // false for register ids such as '00123562', '29340042'
-VatId::parse(string, ?string $defaultCountry = null): VatId
+VatId::parse(string, ?string $defaultCountry = null): VatId      // also tryParse(): ?VatId
 // ->countryCode, ->number, isCzech(), equals(), (string) 'CZ45274649'; GR -> EL
 Address: text, street, streetName, houseNumber, houseNumberType, orientationNumber, district, cityDistrict, city,
          postalCode, county, region, countryCode, countryName, addressPointId, municipalityCode; postalCodeFormatted()
@@ -132,7 +139,7 @@ Address: text, street, streetName, houseNumber, houseNumberType, orientationNumb
 | `InsolvencyRecord` | ARES lists an insolvency record, possibly closed; not proof of current insolvency | |
 | `UnreliableVatPayer` | ADIS `nespolehlivyPlatce` on a VAT payer or VAT group (`isVatPayer()`) | Vat |
 | `UnreliablePerson` | ADIS: unreliable person, or an identified person marked unreliable | Vat |
-| `VatRegistrationEnded` | ARES VAT registration Dissolved/Historical, no active VAT group, and an `Ok` Vat section is not a payer | |
+| `VatRegistrationEnded` | ARES VAT registration Dissolved/Historical and no active VAT group; suppressed only by an `Ok` Vat section whose subject is a payer | (Vat can suppress) |
 | `NoPublishedBankAccount` | payer or VAT group without active published account | Vat |
 | `ViesInvalid` | VIES says invalid | Vies |
 
@@ -166,12 +173,13 @@ Address: text, street, streetName, houseNumber, houseNumberType, orientationNumb
 - `RegistrationStatus::Unknown` = a value added by ARES after this version; an absent key = `Nonexistent`.
 - ADIS and ARES give no VAT registration start/end date or history.
 
-**VIES**: an invalid id is `valid === false`, not an exception. `name`/`address` are null where the member state
-does not disclose them (Germany). `consultationNumber` only when a requester is passed. An empty-string requester is
-`InvalidInput` (no request); map empty config to `null` (Symfony `%env(default::VIES_REQUESTER)%`). With
-`TraderDetails` VIES compares each given field and answers per field in `*Match` (`null` = VIES did not return it).
-Many member states, CZ and IE among them, always answer `NotProcessed`; ES hides name/address, so matching is the
-official way to verify a Spanish trader.
+**VIES**: an invalid id is `valid === false`, not an exception. `name`/`address` are null where the member state does
+not disclose them (Germany). `consultationNumber` only when a requester is passed. `Vies::check()` takes the requester
+as `VatId|string|null`; an empty string is `InvalidInput` (no request), so map empty config to `null` (Symfony
+`%env(default::VIES_REQUESTER)%`). `CompanyLookup` takes `?VatId $viesRequester`: build it with `VatId::parse()` (a
+factory in Symfony), not from a raw config string. With `TraderDetails` VIES compares each given field and answers per
+field in `*Match` (`null` = VIES did not return it). Many member states, CZ and IE among them, always answer
+`NotProcessed`; ES hides name/address, so matching is the official way to verify a Spanish trader.
 
 ## Identifiers
 
@@ -200,20 +208,26 @@ official way to verify a Spanish trader.
 
 - Branch on `$e->errorCode` / `$e->source`, never parse messages. When `errorCode` is a token (`[A-Za-z0-9_.:-]{1,64}`)
   the message ends with ` (error code X)`; `errorCode` itself is raw (untrusted text).
-- Messages never contain response text or record data, only your input id and the HTTP status.
+- Messages never contain response text or record data: only your input id, the HTTP status and, for a transport
+  failure, the HTTP client's error text.
+- `Source`: `Ares`, `Adis`, `Vies`; the case `Isir` is reserved and no exception carries it.
 - Facade: only ARES errors propagate; `ServiceUnavailable`/`InvalidResponse` of a section become `Unavailable`,
   `InvalidInput` of a section becomes `Rejected`, both + `error()`. Requesting a section without its client is
   `\LogicException` before any request.
+- ARES: 404 with `NENALEZENO` / `VYSTUP_SUBJEKT_NENALEZEN` -> `null` (`findMany()` leaves the id out); 400 ->
+  `InvalidInput`, `errorCode` = `subKod`; any other non-200 (also 404 without those codes, 429, 5xx) ->
+  `ServiceUnavailable`.
 - ADIS: status 1 / unknown -> `InvalidResponse`; status 2 (nightly 0:00-0:10), 3, SOAP Fault -> `ServiceUnavailable`;
   a SOAP Fault keeps `faultcode` as `errorCode` with any HTTP status.
 - VIES: HTTP 200 bodies with `errorWrappers` are errors (`INVALID_INPUT`, `INVALID_REQUESTER_INFO` -> `InvalidInput`;
-  all other and unknown codes -> `ServiceUnavailable`), never `valid:false`.
+  all other and unknown codes -> `ServiceUnavailable`), never `valid:false`. HTTP 400 -> `InvalidInput`, other non-200
+  -> `ServiceUnavailable`, `errorCode` from the body when readable.
 - ARES search above 1 000 matches: `InvalidInput`, `errorCode` `VYSTUP_PRILIS_MNOHO_VYSLEDKU`; ask for a narrower query.
 
 ## Limits
 
-100 ids per batch (chunked automatically, up to `maxConcurrency` batches at a time; result order as if sequential;
-the first failing batch in sending order is thrown and no further batch is sent); search max 1 000 results (`limit`
+100 ids per batch (chunked automatically, sent in waves of `maxConcurrency` batches; result order as if sequential;
+the first failure in sending order is thrown, the rest of its wave is cancelled and no further wave is sent); search max 1 000 results (`limit`
 1-1 000, at least one non-blank criterion); ADIS down nightly 0:00-0:10; VIES and member states throttle
 (`ServiceUnavailable`, retry later); timeout 10 s default (use more for `unreliablePayers()`).
 
@@ -228,7 +242,7 @@ count requests per minute/hour/day. Never fan out unbounded.
 No caching, retrying, rate limiting, scheduling or persistence; concurrency only inside one `findMany()`, bounded by
 `maxConcurrency`, never across calls — the project does the rest (cache profiles, retry `ServiceUnavailable` with
 back-off, queue bulk work). No IBAN check-digit validation. No extracts of the public/trade register, no insolvency
-register, no code lists yet.
+register, no ARES code lists or change feed.
 
 For change tracking snapshot the DTOs (`$profile->company`, `->vat`, `->vies`), not the whole profile:
 `serialize($profile)` can fail on stored exceptions. `json_encode($profile)` works.
@@ -250,10 +264,12 @@ $profiles = $lookup->byCompanyIds($requested, Section::Vat);   // CompanyProfile
 
 ## Testing
 
-Depend on `CompanyDirectory`, `VatRegister`, `Vies` and double them. Build collections with
-`new Companies([$company, ...])` / `new VatSubjects([...])` / `new CompanyProfiles([...])` (every company needs an
-IČO, ids unique, else `InvalidInput`); build `Company`, `VatSubject`, `ViesResult` and `CompanyProfile` with named
-constructor arguments (`CompanyProfile`: `statuses`/`errors` keyed by `Section::name`). To test the clients, pass a
-`Symfony\Component\HttpClient\MockHttpClient`. The VIES test service
-(`https://ec.europa.eu/taxation_customs/vies/rest-api/check-vat-test-service`, numbers `100`-`601`, e.g. `DE100`)
-works through the `$endpoint` argument. Do not call the live registers from unit tests.
+Depend on `CompanyDirectory`, `VatRegister`, `Vies` and double them. Build collections with `new Companies([$company,
+...])` / `new VatSubjects([...])` / `new CompanyProfiles([...])` (every company needs an IČO, ids unique, else
+`InvalidInput`); build `Company`, `VatSubject`, `ViesResult` and `CompanyProfile` with named constructor arguments.
+`Company` has no defaults: pass all 17, `registrations: new Registrations([AresRegister::Vat->value =>
+RegistrationStatus::Active])`; every `Address` argument is optional; `CompanyProfile`: `statuses`/`errors` keyed by
+`Section::name`. Production URLs: `AresClient::ENDPOINT`, `VatRegisterClient::ENDPOINT`, `ViesClient::ENDPOINT`. To test
+the clients, pass a `Symfony\Component\HttpClient\MockHttpClient`. The VIES test service
+(`https://ec.europa.eu/taxation_customs/vies/rest-api/check-vat-test-service`, numbers `100`-`601`, e.g. `DE100`) works
+through the `$endpoint` argument. Do not call the live registers from unit tests.

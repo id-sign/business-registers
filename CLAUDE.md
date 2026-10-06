@@ -51,5 +51,7 @@ Read the relevant file before changing that area:
 | `docs/spec-deviations.md` | where the code deliberately differs from the design specification `SPEC.md`      |
 | `docs/testing.md`         | test rules, fixtures, live suite, Docker, CI                                     |
 | `docs/release.md`         | versioning, release steps, `UPGRADE.md`                                          |
+| `CONTRIBUTING.md`         | rules for outside contributors; keep it in line with the rules above             |
+| `SECURITY.md`             | how to report a vulnerability                                                    |
 
 What the register data means for consumers is in `README.md` § "What the data means".

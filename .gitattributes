@@ -1,10 +1,13 @@
 /.claude            export-ignore
+/.claude-plugin     export-ignore
 /.github            export-ignore
 /tests              export-ignore
 /.gitattributes     export-ignore
 /.gitignore         export-ignore
 /.php-cs-fixer.dist.php export-ignore
 /CLAUDE.md          export-ignore
+/CONTRIBUTING.md    export-ignore
+/SECURITY.md        export-ignore
 /docs               export-ignore
 /Makefile           export-ignore
 /phpstan.neon.dist  export-ignore

@@ -16,7 +16,8 @@ All implement `Exception\ExceptionInterface`.
 
 - **No response text in any message**: not ARES `popis`, ADIS `statusText`, SOAP `faultstring`, VIES `message`, nor
   any value read from a response (responses carry names and birth dates; messages end up in logs). Allowed: the
-  caller's input id, the HTTP status, a fixed description.
+  caller's input id, the HTTP status, a fixed description, and for a transport failure the message of the HTTP
+  client's transport exception (`Internal/HttpTransport`).
 - **Error codes are appended by the exception, never by hand.** `InvalidInput` and `ServiceUnavailable` append
   ` (error code X)` when `errorCode` is set and matches `/^[A-Za-z0-9_.:-]{1,64}$/D`; otherwise the message stays
   the plain description. `errorCode` always keeps the raw value. The regex exists in both classes; change both

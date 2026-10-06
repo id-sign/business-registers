@@ -1,5 +1,8 @@
 # Business registers
 
+[![CI](https://github.com/id-sign/business-registers/actions/workflows/ci.yaml/badge.svg)](https://github.com/id-sign/business-registers/actions/workflows/ci.yaml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Typed, stateless PHP client for Czech business registers. One call gives you a company profile that combines three
 sources, so you never deal with JSON, SOAP or per-source quirks yourself:
 
@@ -7,8 +10,8 @@ sources, so you never deal with JSON, SOAP or per-source quirks yourself:
 - **VAT register (ADIS)** — VAT payer status, unreliable payers, published bank accounts.
 - **VIES** — validity of an EU VAT id, with a consultation number.
 
-Register extracts (public register, trade register), the insolvency register (ISIR) and ARES code lists and change
-feeds are planned for later releases and are not part of this one (`v0.1.0`).
+Not covered: register extracts (public register, trade register), the insolvency register (ISIR), ARES code lists
+and the ARES change feed.
 
 ## What you can get
 
@@ -60,7 +63,7 @@ register holds it, even when it fails the check digit (see § What the data mean
 
 ## Installation
 
-The package is not published yet; once it is on Packagist (planned name `id-sign/business-registers`):
+The package is not on Packagist yet; from the first release (`v0.1.0`) on:
 
 ```bash
 composer require id-sign/business-registers symfony/http-client
@@ -248,9 +251,9 @@ foreach ($profiles->missing($requested) as $id) {   // list<CompanyId> — not h
 }
 ```
 
-The statuses mean the same as for one company. If the ADIS call fails, `Vat` is `Unavailable` (outage, invalid
-response) or `Rejected` for every profile in that call; a company whose lookup DIČ is not Czech is not sent to ADIS
-and gets `Rejected`. A VIES outage or rejection affects only the companies with that lookup DIČ, which share the
+The statuses mean the same as for one company. If the ADIS call fails (outage, invalid response), `Vat` is
+`Unavailable` for every profile asked in that call; a company whose lookup DIČ is not Czech is not sent to ADIS and
+gets `Rejected`. A VIES outage or rejection affects only the companies with that lookup DIČ, which share the
 stored exception. Once VIES rejects the requester (`INVALID_REQUESTER_INFO`), no further VIES request is sent in that
 call: every company whose lookup DIČ was not yet checked gets `Rejected` with that same exception instance, whose
 message names the DIČ of the request that was rejected; a company whose lookup DIČ was already checked keeps that
@@ -314,8 +317,8 @@ $company->registrations->active();       // list<AresRegister>
 `findMany()` removes duplicates, sends the ids in batches of 100 (up to `$maxConcurrency` batches at a time) and
 returns a `Companies` collection. ARES answers each batch in ascending IČO; with more than 100 ids the batches are
 appended in request order, so the collection as a whole is not sorted. Ids that ARES does not hold are absent. If a
-batch fails, the first failure in sending order is thrown and no further batch is sent; ADIS `findMany()` works the
-same way.
+batch fails, the first failure in sending order is thrown, the other batches sent at the same time are cancelled and
+no further batch is sent; ADIS `findMany()` works the same way.
 
 ```php
 // ids your database stored from $company->id: re-hydrate with fromRegister(); parse() is for user input only
@@ -452,9 +455,9 @@ Every exception implements `IdSign\BusinessRegisters\Exception\ExceptionInterfac
 | `InvalidResponse`                                    | the source answered something the library cannot read                   | an error to investigate; report it                                       |
 
 `InvalidInput` has `?string $errorCode`; `ServiceUnavailable` has `Source $source` and `?string $errorCode`;
-`InvalidResponse` has `Source $source`. `Source` is `Ares`, `Adis`, `Vies` (and `Isir`, reserved).
-`CompanyLookup::byCompanyId()` throws only ARES errors; an exception from a section is recorded in the profile
-(`Unavailable` or `Rejected`, see [Five meanings of `null`](#five-meanings-of-null)).
+`InvalidResponse` has `Source $source`. `Source` is `Ares`, `Adis` or `Vies`; the case `Isir` is reserved and no
+exception carries it. `CompanyLookup::byCompanyId()` throws only ARES errors; an exception from a section is recorded in
+the profile (`Unavailable` or `Rejected`, see [Five meanings of `null`](#five-meanings-of-null)).
 
 ```php
 use IdSign\BusinessRegisters\Exception\InvalidInput;
@@ -480,7 +483,8 @@ Rules for messages:
   only when the code looks like a token (`[A-Za-z0-9_.:-]`, 1–64 characters); `$e->errorCode` always holds the raw value
   and should be treated as untrusted text. Branch on `$e->errorCode` and `$e->source`, never parse the message.
 - Messages never contain response text (ARES `popis`, ADIS `statusText`, SOAP `faultstring`, VIES `message`) or record
-  data. They may contain the id you passed in and the HTTP status.
+  data. They may contain the id you passed in, the HTTP status and, for a transport failure, the error text of the
+  HTTP client.
 - `InvalidResponse` messages contain only the source label, the key path and the expected type, for example
   `ARES: expected string at sidlo.nazevObce`. JSON paths are jq-style with 0-based indices (`zaznamy[0].ico`); XML paths
   are XPath with 1-based indices
@@ -510,7 +514,7 @@ The ARES status in the 16 source registers (`$company->registrations`) is a poin
 | VAT id filled in ARES = VAT payer                     | the VAT id stays after the registration ended (`26863154` has a DIČ and `Vat = Dissolved`); `Vat = Active` also covers identified persons. Only ADIS decides whether a subject is a VAT payer; `Vat = Dissolved` can lag behind ADIS (`10803351` is a payer in ADIS), so `VatRegistrationEnded` yields to an `Ok` VAT section                                                         |
 | every company has a DIČ of its own                    | a VAT group member has a group DIČ and its own `vatId` is `null` or a former own DIČ (Komerční banka `45317054`: group DIČ `CZ699001182`, no own; `21985685`: former own DIČ, `Vat = Dissolved`). Use `vatLookupId()`, never `vatId`                                                                                                                                                  |
 | a DIČ can be derived from the IČO                     | natural persons have a nine- or ten-digit DIČ: the birth number (nine digits for births before 1954) or a nine-digit number assigned by the tax administrator (starts with 6), and a derived DIČ of a group member is usually not found in ADIS. Always take the DIČ from ARES                                                                                                        |
-| `Insolvency = Active` means in insolvency now         | it stays `Active` after the proceedings ended (České aerolinie `45795908`). Only the insolvency register (planned) tells whether it is current — hence the flag is named `InsolvencyRecord`                                                                                                                                                                                           |
+| `Insolvency = Active` means in insolvency now         | it stays `Active` after the proceedings ended (České aerolinie `45795908`). Only the insolvency register (ISIR, not covered by this library) tells whether it is current — hence the flag is named `InsolvencyRecord`                                                                                                                                                                 |
 | `Bankruptcy` (CEÚ) reflects insolvency                | it does not (Sberbank CZ `25083325` in bankruptcy: `Nonexistent`). Do not use it                                                                                                                                                                                                                                                                                                      |
 | every IČO in ARES satisfies the check digit           | no: `00123562`, `29340042` are active. `$company->id` may have `hasValidCheckDigit() === false`; strings you pass stay strict, so re-hydrate ids stored from ARES with `CompanyId::fromRegister()` (§ Storing identifiers)                                                                                                                                                            |
 | `taxOfficeCode` of ARES and ADIS name the same office | not always. Both are codes of the list `FinancniUrad`. ARES `financniUrad` is the competent workplace (`293` = Územní pracoviště Brno-venkov) or `013` Specialised Tax Office; ADIS `cisloFu` is a regional office 451–464 (`461` = Finanční úřad pro Jihomoravský kraj) or `013`. They are equal only for Specialised Tax Office subjects; never compare or join them across sources |
@@ -520,9 +524,9 @@ The ARES status in the 16 source registers (`$company->registrations`) is a poin
 | statuses are complete                                 | all 16 registers are always present; a key ARES omits is `Nonexistent`; a value ARES adds later is `Unknown`                                                                                                                                                                                                                                                                          |
 
 What the registers do not return: the date a VAT registration started or ended and its history (neither ADIS nor ARES
-has it), and the reason a subject is an unreliable payer. The library does not cover financial statements, beneficial
-owners, enforcement proceedings, subsidies or sanction lists. Statutory bodies and members (public register) are
-planned for a later release.
+has it), and the reason a subject is an unreliable payer. The library does not cover statutory bodies and members
+(public register extracts), financial statements, beneficial owners, enforcement proceedings, subsidies or sanction
+lists.
 
 ## Limits
 
@@ -619,8 +623,15 @@ with any country prefix (`DE100`) and answers with the corresponding error.
 ## AI assistant skill
 
 `.claude/skills/business-registers/SKILL.md` is a self-contained guide for an AI assistant working in a project that
-uses this library. It lives in the repository only (it is not part of the Composer package); copy the
-`business-registers` directory into your project's `.claude/skills/`.
+uses this library. It is not part of the Composer package. In Claude Code, install it as a plugin from this repository:
+
+```
+/plugin marketplace add id-sign/business-registers
+/plugin install business-registers@id-sign
+```
+
+Without the plugin, copy the `business-registers` directory into your project's `.claude/skills/`; another assistant
+can read `SKILL.md` directly.
 
 ## Development
 
@@ -633,9 +644,19 @@ composer cs          # PHP CS Fixer, dry run (composer cs:fix applies)
 composer check       # cs, phpstan and test; run before every commit
 ```
 
+Contribution rules are in [CONTRIBUTING.md](CONTRIBUTING.md); report a vulnerability as described in
+[SECURITY.md](SECURITY.md).
+
 `make test`, `make test-live`, `make phpstan`, `make cs-fix` and `make test-matrix` run the same in Docker
 (`PHP_VERSION=8.4` by default; `test-matrix` covers 8.4 and 8.5). `make` leaves a root-owned `composer.phar`
 (gitignored) in the project root. The live suite may skip a VIES test when production VIES is throttling; run it again.
+
+## Disclaimer
+
+This is an independent project. It is not affiliated with or endorsed by the Ministry of Finance of the Czech Republic,
+the Czech Tax Administration or the European Commission, which operate ARES, ADIS and VIES. The library passes on what
+these services answer; risk flags are derived from that data by the rules above (see
+[What the data means](#what-the-data-means)) and are not a legal assessment of a subject.
 
 ## License
 

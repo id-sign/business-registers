@@ -1,6 +1,8 @@
 # Deviations from the design specification
 
-`SPEC.md` (a local, gitignored document) defines the contracts. Where the code differs, the code is right:
+The contracts were first defined in a design specification, `SPEC.md`, which is an internal document and not part of
+the repository. This table records where the code deliberately differs from it, so that the decisions are not undone.
+Where the two differ, the code is right:
 
 | Specification                                                   | Code                                                                                                                                        | Reason                                                                           |
 |-----------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------|
@@ -11,6 +13,6 @@
 | § 8 `InLiquidation`: name ends with "v likvidaci"               | `` (?<![^\s"'„“”‘’‚‛‟«»‹›´`,.()\/\p{Pd}])v\s+likvidaci(?![^\s"'„“”‘’‚‛‟«»‹›´`,.()\/\p{Pd}]) ``                                              | the legal suffix (Civil Code § 187(2)) stands anywhere in real names             |
 | § 3.5 `$errorCode` on the exception; messages may quote sources | code also appended as ` (error code X)` for token-like codes; no response text in messages                                                  | Monolog logs only the message of custom exceptions; responses hold personal data |
 | § 5.5 account comparison "with or without spaces"               | also Unicode spaces and dash variants                                                                                                       | numbers copied from documents                                                    |
-| § 2 tree                                                        | adds `src/Internal/` (transport, readers, `Dates`, `ListElement`, `Identifiers`), `Companies`, `VatSubjects`                                | shared by ARES, ADIS and planned sources                                         |
+| § 2 tree                                                        | adds `src/Internal/` (transport, readers, `Dates`, `ListElement`, `Identifiers`), `Companies`, `VatSubjects`                                | shared by ARES, ADIS and further sources                                         |
 | § 9.3 `.gitattributes`                                          | also `/docs export-ignore`                                                                                                                  | contributor docs are not part of the package                                     |
 | § 1 / § 10 first release `v1.0.0`                               | `v0.1.0`                                                                                                                                    | the first release is a 0.x                                                       |

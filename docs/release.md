@@ -15,5 +15,5 @@
 
 ## Status
 
-Local repository only (branch `main`). Still to do by the maintainer: the GitHub remote (planned
-`github.com/id-sign/business-registers`), the Packagist registration, the tag `v0.1.0` and the first release.
+Public repository `github.com/id-sign/business-registers`, branch `main`. Still to do by the maintainer: the Packagist
+registration, the tag `v0.1.0` and the first release.
