@@ -15,5 +15,5 @@
 
 ## Status
 
-Public repository `github.com/id-sign/business-registers`, branch `main`. Still to do by the maintainer: the Packagist
-registration, the tag `v0.1.0` and the first release.
+Public repository `github.com/id-sign/business-registers`, branch `main`, published on Packagist as
+`id-sign/business-registers`. A GitHub webhook updates Packagist on every push, tags included.

@@ -1,6 +1,7 @@
 # Business registers
 
 [![CI](https://github.com/id-sign/business-registers/actions/workflows/ci.yaml/badge.svg)](https://github.com/id-sign/business-registers/actions/workflows/ci.yaml)
+[![Packagist](https://img.shields.io/packagist/v/id-sign/business-registers.svg)](https://packagist.org/packages/id-sign/business-registers)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Typed, stateless PHP client for Czech business registers. One call gives you a company profile that combines three
@@ -62,8 +63,6 @@ register holds it, even when it fails the check digit (see § What the data mean
 - any implementation of `symfony/http-client-contracts` (for example `symfony/http-client`)
 
 ## Installation
-
-The package is not on Packagist yet; from the first release (`v0.1.0`) on:
 
 ```bash
 composer require id-sign/business-registers symfony/http-client
