@@ -69,7 +69,7 @@ final class RegistrationsTest extends TestCase
     {
         yield 'active' => ['AKTIVNI', RegistrationStatus::Active];
         yield 'historical' => ['HISTORICKY', RegistrationStatus::Historical];
-        yield 'dissolved' => ['ZANIKLY', RegistrationStatus::Dissolved];
+        yield 'ended' => ['ZANIKLY', RegistrationStatus::Ended];
         yield 'nonexistent' => ['NEEXISTUJICI', RegistrationStatus::Nonexistent];
         yield 'suspended' => ['POZASTAVENY', RegistrationStatus::Suspended];
         yield 'future' => ['BUDOUCI', RegistrationStatus::Future];
@@ -87,11 +87,11 @@ final class RegistrationsTest extends TestCase
     {
         $registrations = self::registrations([
             AresRegister::Vat->value => RegistrationStatus::Active,
-            AresRegister::VatGroup->value => RegistrationStatus::Dissolved,
+            AresRegister::VatGroup->value => RegistrationStatus::Ended,
         ]);
 
         self::assertSame(RegistrationStatus::Active, $registrations->status(AresRegister::Vat));
-        self::assertSame(RegistrationStatus::Dissolved, $registrations->status(AresRegister::VatGroup));
+        self::assertSame(RegistrationStatus::Ended, $registrations->status(AresRegister::VatGroup));
         self::assertSame(RegistrationStatus::Nonexistent, $registrations->status(AresRegister::Insolvency));
     }
 

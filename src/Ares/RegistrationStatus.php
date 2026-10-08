@@ -13,7 +13,8 @@ enum RegistrationStatus: string
 {
     case Active = 'AKTIVNI';
     case Historical = 'HISTORICKY';
-    case Dissolved = 'ZANIKLY';
+    /** ZANIKLY: the registration in that register ended (zánik). */
+    case Ended = 'ZANIKLY';
     case Nonexistent = 'NEEXISTUJICI';
     case Suspended = 'POZASTAVENY';
     case Future = 'BUDOUCI';

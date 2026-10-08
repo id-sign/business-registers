@@ -21,6 +21,7 @@ enum AresRegister: string
     case VatGroup = 'SkDph';
     case ExciseTax = 'Sd';
     case Insolvency = 'Ir';
+    /** CEÚ: konkurs and vyrovnání under Act No. 328/1991 Sb. only (opened before 2008). */
     case Bankruptcy = 'Ceu';
     case Schools = 'Rs';
     case Subsidies = 'Red';
