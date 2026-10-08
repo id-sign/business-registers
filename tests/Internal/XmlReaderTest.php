@@ -405,6 +405,148 @@ final class XmlReaderTest extends TestCase
         );
     }
 
+    // --- child element numbers, dates and date-times ---
+
+    private const string ISIR_VALUES = <<<'XML'
+        <?xml version="1.0" encoding="UTF-8"?>
+        <ns2:getIsirWsCuzkDataResponse xmlns:ns2="http://isirws.cca.cz/types/">
+          <data>
+            <number> 42 </number>
+            <blank>   </blank>
+            <text>abc</text>
+            <decimal>1.5</decimal>
+            <huge>99999999999999999999</huge>
+            <day>2026-10-08Z</day>
+            <badDay>2022-13-45Z</badDay>
+            <moment>2026-10-08T09:26:35.000Z</moment>
+            <winterMoment>2026-01-15T09:26:35.000Z</winterMoment>
+            <badMoment>yesterday</badMoment>
+          </data>
+        </ns2:getIsirWsCuzkDataResponse>
+        XML;
+
+    private static function isirValues(): XmlReader
+    {
+        return XmlReader::fromString(self::ISIR_VALUES, Source::Isir, ['ns2' => 'http://isirws.cca.cz/types/'])->elements('data')[0];
+    }
+
+    public function testIntIsTheTrimmedChildTextAsAnInteger(): void
+    {
+        self::assertSame(42, self::isirValues()->int('number'));
+        self::assertSame(42, self::isirValues()->optionalInt('number'));
+    }
+
+    public function testOptionalIntIsNullForAnAbsentOrBlankElement(): void
+    {
+        self::assertNull(self::isirValues()->optionalInt('nothing'));
+        self::assertNull(self::isirValues()->optionalInt('blank'));
+    }
+
+    public function testMandatoryIntReportsAnAbsentOrBlankElementAsMissing(): void
+    {
+        $data = self::isirValues();
+
+        self::assertSame('ISIR: missing data[1]/nothing', self::failure(static fn () => $data->int('nothing'))->getMessage());
+        self::assertSame('ISIR: missing data[1]/blank', self::failure(static fn () => $data->int('blank'))->getMessage());
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function provideNonIntegerElements(): iterable
+    {
+        yield 'letters' => ['text'];
+        yield 'decimal' => ['decimal'];
+        yield 'overflow' => ['huge'];
+    }
+
+    #[DataProvider('provideNonIntegerElements')]
+    public function testIntRejectsTextThatIsNotAnIntegerWithItsPath(string $element): void
+    {
+        $data = self::isirValues();
+        $expected = 'ISIR: expected integer at data[1]/'.$element;
+
+        self::assertSame($expected, self::failure(static fn () => $data->int($element))->getMessage());
+        self::assertSame($expected, self::failure(static fn () => $data->optionalInt($element))->getMessage());
+    }
+
+    public function testDateIsMidnightInPragueAndToleratesTheZoneSuffix(): void
+    {
+        self::assertSame('2026-10-08T00:00:00+02:00', self::isirValues()->date('day')->format('c'));
+        self::assertSame('2026-10-08T00:00:00+02:00', self::isirValues()->optionalDate('day')?->format('c'));
+    }
+
+    public function testOptionalDateIsNullForAnAbsentOrBlankElement(): void
+    {
+        self::assertNull(self::isirValues()->optionalDate('nothing'));
+        self::assertNull(self::isirValues()->optionalDate('blank'));
+    }
+
+    public function testMandatoryDateReportsAnAbsentElementAsMissing(): void
+    {
+        $data = self::isirValues();
+
+        self::assertSame('ISIR: missing data[1]/nothing', self::failure(static fn () => $data->date('nothing'))->getMessage());
+    }
+
+    public function testDateRejectsAnUnreadableDateWithItsPath(): void
+    {
+        $data = self::isirValues();
+        $expected = 'ISIR: expected date (Y-m-d) at data[1]/badDay';
+
+        self::assertSame($expected, self::failure(static fn () => $data->date('badDay'))->getMessage());
+        self::assertSame($expected, self::failure(static fn () => $data->optionalDate('badDay'))->getMessage());
+    }
+
+    public function testOptionalDateTimePragueReadsTheClockValueAsPragueLocalTime(): void
+    {
+        $summer = self::isirValues()->optionalDateTimePrague('moment');
+        $winter = self::isirValues()->optionalDateTimePrague('winterMoment');
+
+        self::assertNotNull($summer);
+        self::assertNotNull($winter);
+        self::assertSame('2026-10-08T09:26:35+02:00', $summer->format('c'));
+        self::assertSame('2026-01-15T09:26:35+01:00', $winter->format('c'));
+        self::assertSame('Europe/Prague', $summer->getTimezone()->getName());
+    }
+
+    public function testOptionalDateTimePragueIsNullForAnAbsentOrBlankElement(): void
+    {
+        self::assertNull(self::isirValues()->optionalDateTimePrague('nothing'));
+        self::assertNull(self::isirValues()->optionalDateTimePrague('blank'));
+    }
+
+    public function testOptionalDateTimePragueRejectsAnUnreadableValueWithItsPath(): void
+    {
+        $data = self::isirValues();
+
+        $e = self::failure(static fn () => $data->optionalDateTimePrague('badMoment'));
+
+        self::assertSame('ISIR: expected date-time at data[1]/badMoment', $e->getMessage());
+        self::assertSame(Source::Isir, $e->source);
+    }
+
+    public function testMessagesOfTheChildValueReadersNeverContainValuesFromTheResponse(): void
+    {
+        $reader = XmlReader::fromString(
+            '<root><number>SENTINEL-NUMBER</number><day>SENTINEL-DAY</day><moment>SENTINEL-MOMENT</moment></root>',
+            Source::Isir,
+            [],
+        );
+
+        $messages = [
+            self::failure(static fn () => $reader->int('number'))->getMessage(),
+            self::failure(static fn () => $reader->optionalInt('number'))->getMessage(),
+            self::failure(static fn () => $reader->date('day'))->getMessage(),
+            self::failure(static fn () => $reader->optionalDate('day'))->getMessage(),
+            self::failure(static fn () => $reader->optionalDateTimePrague('moment'))->getMessage(),
+        ];
+
+        foreach ($messages as $message) {
+            self::assertStringNotContainsString('SENTINEL', $message);
+        }
+    }
+
     // --- no response content in messages ---
 
     /**

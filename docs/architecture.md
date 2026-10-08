@@ -12,12 +12,14 @@ src/
   Adis/        VatRegister (interface)  VatRegisterClient  VatSubject  VatSubjects  SubjectType  BankAccount
                UnreliablePayer  Internal/ResponseParser  Internal/BankAccountNumber
   Vies/        Vies (interface)  ViesClient  ViesResult  TraderDetails  MatchResult
+  Isir/        InsolvencyRegister (interface)  InsolvencyClient  InsolvencyProceedings  InsolvencyProceeding
+               Internal/ResponseParser
   Internal/    HttpTransport  JsonReader  XmlReader  Dates  ListElement  Identifiers @internal, not public API
-tests/         mirrors src/; Fixtures/{Ares,Adis,Vies}; Double/ (test helpers); Live/ (live suite)
+tests/         mirrors src/; Fixtures/{Ares,Adis,Vies,Isir}; Double/ (test helpers); Live/ (live suite)
 ```
 
-Every client implements a public interface (`CompanyDirectory`, `VatRegister`, `Vies`); consumers depend on the
-interface and use it for test doubles.
+Every client implements a public interface (`CompanyDirectory`, `VatRegister`, `Vies`, `InsolvencyRegister`);
+consumers depend on the interface and use it for test doubles.
 
 ## Classes and state
 
@@ -26,7 +28,7 @@ interface and use it for test doubles.
 - Clients are stateless `final readonly` classes, safe in long-running workers. `HttpClientInterface`, endpoint,
   timeout and, for ARES and ADIS, `maxConcurrency` come through the constructor; request options are set per request.
 - Request building and response parsing are separate: ARES `Internal/CompanyMapper` plus private body builders; ADIS
-  `Internal/ResponseParser` plus private envelope builders; VIES private methods of `ViesClient`.
+  and ISIR `Internal/ResponseParser` plus private envelope builders; VIES private methods of `ViesClient`.
 - Ids read from a response are built with `CompanyId::fromRegister()` (format only), because ARES lists active
   subjects whose IČO fails the check digit; ids the caller passes as strings go through the strict `parse()`.
 - A VAT id read from an ARES response (`dic`, `dicSkDph`) goes through the strict `VatId::parse($value, 'CZ')`, and a
@@ -50,11 +52,18 @@ interface and use it for test doubles.
   `HttpClient::create()` usually returns when `ext-curl` is loaded, does; `NativeHttpClient`, its fallback without
   `ext-curl`, opens each request synchronously, so waves bring no speed-up there.
 - The status mapping is explicit per client; the transport never interprets a status. Error bodies of non-200 responses
-  are read leniently (`JsonReader::tryFromJson` for ARES and VIES, `Adis\Internal\ResponseParser::faultCode` over
-  `XmlReader` for ADIS; an `InvalidResponse` is swallowed): the HTTP status decides the exception, the body only
-  supplies an `errorCode`.
-- ADIS is SOAP 1.1 over plain HTTP POST without `ext-soap`: the envelope is built by hand and parsed through
-  `Internal/XmlReader`.
+  are read leniently (`JsonReader::tryFromJson` for ARES and VIES, `Adis\Internal\ResponseParser::faultCode` and
+  `Isir\Internal\ResponseParser::faultCode` over `XmlReader` for ADIS and ISIR; an `InvalidResponse` is swallowed):
+  the HTTP status decides the exception, the body only supplies an `errorCode`.
+- ADIS and ISIR are SOAP 1.1 over plain HTTP POST without `ext-soap`: the envelope is built by hand and parsed
+  through `Internal/XmlReader`. Each source has its own parser and its own lenient `faultCode()`; a shared SOAP helper
+  would need the source and the prefix map passed in and save a few lines.
+- ISIR has no bulk query and no published limits: `InsolvencyClient::find()` sends one request with
+  `filtrAktualniRizeni=F` (the service's "current only" filter hides only some ended states, so the library asks for
+  everything and decides "ongoing" itself in `InsolvencyProceeding::isOngoing()`) and `maxPocetVysledku=101`; a 101st
+  row means the list is incomplete and is `InvalidResponse`, because the service caps `pocetVysledku` as well and the
+  response order is undocumented. The request children are unqualified and their order is fixed by the XSD; another
+  order is a SOAP Fault.
 
 ## Bulk calls and collections
 

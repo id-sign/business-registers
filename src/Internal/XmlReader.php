@@ -14,8 +14,8 @@ use IdSign\BusinessRegisters\Source;
  * elements without a namespace. Lookups see direct children only.
  *
  * Methods without a prefix are mandatory: an absent node or a text that is empty after trimming
- * throws InvalidResponse; the optional… variants return null instead. An unreadable date throws
- * in both.
+ * throws InvalidResponse; the optional… variants return null instead. An unreadable integer, date
+ * or date-time throws in both.
  *
  * Error messages name the path and the expected type, never a value from the response.
  * Paths are XPath-style: names joined by "/", positions 1-based, attributes with "@"
@@ -145,6 +145,77 @@ final readonly class XmlReader
         $children = $this->children($name);
 
         return [] === $children ? null : self::nonEmpty($children[0]->textContent);
+    }
+
+    /**
+     * Child text of digits as an integer.
+     *
+     * @throws InvalidResponse
+     */
+    public function int(string $name): int
+    {
+        return $this->optionalInt($name) ?? throw $this->missing($name);
+    }
+
+    /**
+     * @throws InvalidResponse
+     */
+    public function optionalInt(string $name): ?int
+    {
+        $text = $this->optionalString($name);
+        if (null === $text) {
+            return null;
+        }
+
+        if (1 !== preg_match('/^\d+$/D', $text)) {
+            throw $this->invalid($name, 'integer');
+        }
+
+        $int = (int) $text;
+        // the cast saturates on overflow
+        if ((string) $int !== (preg_replace('/^0+(?=\d)/', '', $text) ?? $text)) {
+            throw $this->invalid($name, 'integer');
+        }
+
+        return $int;
+    }
+
+    /**
+     * Child text Y-m-d as midnight in Europe/Prague.
+     *
+     * @throws InvalidResponse
+     */
+    public function date(string $name): \DateTimeImmutable
+    {
+        return $this->optionalDate($name) ?? throw $this->missing($name);
+    }
+
+    /**
+     * @throws InvalidResponse
+     */
+    public function optionalDate(string $name): ?\DateTimeImmutable
+    {
+        $value = $this->optionalString($name);
+        if (null === $value) {
+            return null;
+        }
+
+        return Dates::date($value) ?? throw $this->invalid($name, 'date (Y-m-d)');
+    }
+
+    /**
+     * Child text date and time as Europe/Prague local time, see Dates::dateTimePrague().
+     *
+     * @throws InvalidResponse
+     */
+    public function optionalDateTimePrague(string $name): ?\DateTimeImmutable
+    {
+        $value = $this->optionalString($name);
+        if (null === $value) {
+            return null;
+        }
+
+        return Dates::dateTimePrague($value) ?? throw $this->invalid($name, 'date-time');
     }
 
     /**

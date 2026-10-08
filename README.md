@@ -444,6 +444,48 @@ A match property is `null` when VIES did not return the field. Without `TraderDe
 Spain does not disclose name and address (`$result->name === null`), so matching is the official way to verify a
 Spanish trader.
 
+### Insolvency register (ISIR)
+
+`find()` takes an IČO (a string is checked strictly, including the check digit, before any request) and returns every
+proceeding the register currently lists for it, ended ones included:
+
+```php
+use IdSign\BusinessRegisters\Isir\InsolvencyClient;
+
+$isir = new InsolvencyClient($http);
+$proceedings = $isir->find('25083325');          // InsolvencyProceedings; empty when the subject is not listed
+
+$proceedings->hasOngoing();                      // true
+$proceedings->ongoing();                         // list<InsolvencyProceeding>
+$proceedings->synchronisedAt;                    // ?DateTimeImmutable — how fresh the register data are
+foreach ($proceedings as $proceeding) {          // also $proceedings->proceedings, count($proceedings)
+    $proceeding->reference();                    // "95 INS 12575/2022"
+    $proceeding->isOngoing();                    // true
+    $proceeding->stateCode;                      // ?string, e.g. "KONKURS"
+    $proceeding->insolvencyDeclaredOn;           // ?DateTimeImmutable — decision on insolvency took legal force
+    $proceeding->endedOn;                        // ?DateTimeImmutable — end of the proceeding took legal force
+}
+```
+
+- `isOngoing()` is `true` unless the proceeding has an end date (`endedOn`) or one of the ended states `ODSKRTNUTA`,
+  `PRAVOMOCNA`, `VYRIZENA`, `MYLNÝ ZÁP.`; a missing or unknown state counts as ongoing (a false alarm is safer than a
+  missed insolvency). A filed petition (`NEVYRIZENA`) is ongoing.
+- `stateCode` is the register's raw value, never an enum. Observed: `NEVYRIZENA`, `ÚPADEK`, `KONKURS`, `REORGANIZ`,
+  `ODDLUŽENÍ`, `PRAVOMOCNA`, `ODSKRTNUTA`. `KONKURS` or `ÚPADEK` does not mean the proceeding is still running
+  (České aerolinie `45795908`: `ÚPADEK` with an end date).
+- An empty collection means "not on the list of debtors now", not "never insolvent": the court removes a debtor
+  5 years after the end of the proceeding took legal force, sooner in some cases (Act No. 182/2006 Sb. § 425).
+- One row per debtor: spouses in one proceeding are two proceedings with the same `reference()`
+  (`otherDebtorInProceeding` is `true`). A natural person is found by IČO only if the court recorded it.
+- Every row carries what the register publishes (§ 420), including the birth number (`birthNumber`, as received),
+  birth date, name and address of natural persons. Your application is the controller of that personal data.
+- `synchronisedAt` is the register's own freshness hint, read as Prague local time (verified in summer time only); the
+  register omits it for an empty result. It is never part of a verdict.
+- The service listens on port 8443 (`https://isir.justice.cz:8443/...`); allow it in your egress firewall. One `find()`
+  is one request, 0.1–0.25 s observed.
+- `find()` returns at most 100 proceedings. A subject with more than 100 listed rows throws `InvalidResponse` rather
+  than returning an incomplete list that might leave out an ongoing proceeding.
+
 ## Error handling
 
 Every exception implements `IdSign\BusinessRegisters\Exception\ExceptionInterface`.
@@ -455,9 +497,9 @@ Every exception implements `IdSign\BusinessRegisters\Exception\ExceptionInterfac
 | `InvalidResponse`                                    | the source answered something the library cannot read                   | an error to investigate; report it                                       |
 
 `InvalidInput` has `?string $errorCode`; `ServiceUnavailable` has `Source $source` and `?string $errorCode`;
-`InvalidResponse` has `Source $source`. `Source` is `Ares`, `Adis` or `Vies`; the case `Isir` is reserved and no
-exception carries it. `CompanyLookup::byCompanyId()` throws only ARES errors; an exception from a section is recorded in
-the profile (`Unavailable` or `Rejected`, see [Five meanings of `null`](#five-meanings-of-null)).
+`InvalidResponse` has `Source $source`. `Source` is `Ares`, `Adis`, `Vies` or `Isir`. `CompanyLookup::byCompanyId()`
+throws only ARES errors; an exception from a section is recorded in the profile (`Unavailable` or `Rejected`, see
+[Five meanings of `null`](#five-meanings-of-null)).
 
 ```php
 use IdSign\BusinessRegisters\Exception\InvalidInput;
@@ -482,9 +524,9 @@ Rules for messages:
   as Monolog's do not log custom exception properties, so the code has to be in the message. The suffix is appended
   only when the code looks like a token (`[A-Za-z0-9_.:-]`, 1–64 characters); `$e->errorCode` always holds the raw value
   and should be treated as untrusted text. Branch on `$e->errorCode` and `$e->source`, never parse the message.
-- Messages never contain response text (ARES `popis`, ADIS `statusText`, SOAP `faultstring`, VIES `message`) or record
-  data. They may contain the id you passed in, the HTTP status and, for a transport failure, the error text of the
-  HTTP client.
+- Messages never contain response text (ARES `popis`, ADIS `statusText`, ISIR `textChyby` / `popisChyby`, SOAP
+  `faultstring`, VIES `message`) or record data. They may contain the id you passed in, the HTTP status and, for a
+  transport failure, the error text of the HTTP client.
 - `InvalidResponse` messages contain only the source label, the key path and the expected type, for example
   `ARES: expected string at sidlo.nazevObce`. JSON paths are jq-style with 0-based indices (`zaznamy[0].ico`); XML paths
   are XPath with 1-based indices
@@ -499,6 +541,9 @@ Per source:
 | ARES   | other status, transport error, timeout                                                                                              | `ServiceUnavailable`                                                                                                                             |
 | ADIS   | status code 1, unknown code                                                                                                         | `InvalidResponse`                                                                                                                                |
 | ADIS   | status code 2 (nightly maintenance), 3, SOAP Fault, HTTP ≠ 200, transport error, timeout                                            | `ServiceUnavailable`, `errorCode` = status code 2 or 3, or the SOAP `faultcode` (also with HTTP ≠ 200); otherwise `null`                         |
+| ISIR   | empty result (`WS2`)                                                                                                                | `find()` returns an empty collection                                                                                                             |
+| ISIR   | `WS4` (data not current), `SQL1`, `SERVER1`, SOAP Fault, HTTP ≠ 200, transport error, timeout                                       | `ServiceUnavailable`, `errorCode` = the ISIR code or the SOAP `faultcode` (also with HTTP ≠ 200); otherwise `null`                               |
+| ISIR   | `WS1`, `WS3`, unknown code, truncated answer (`pocetVysledku` above the rows returned), more than 100 rows                          | `InvalidResponse`                                                                                                                                |
 | VIES   | `INVALID_INPUT`, `INVALID_REQUESTER_INFO`, HTTP 400                                                                                 | `InvalidInput`, `errorCode` = VIES code                                                                                                          |
 | VIES   | every other code (`MS_UNAVAILABLE`, `TIMEOUT`, `*_MAX_CONCURRENT_REQ*`, `VAT_BLOCKED`, `IP_BLOCKED`, unknown codes), other statuses | `ServiceUnavailable`, `errorCode` = VIES code when the body is readable                                                                          |
 | any    | element of the wrong type in an id list, a duplicate in a collection constructor                                                    | `InvalidInput`                                                                                                                                   |
@@ -537,6 +582,7 @@ lists.
 - ADIS is unavailable every night from 0:00 to 0:10 (`ServiceUnavailable`, `errorCode` `2`).
 - VIES and the member states throttle concurrent requests (`MS_MAX_CONCURRENT_REQ`, `GLOBAL_MAX_CONCURRENT_REQ`);
   treat these as `ServiceUnavailable` and retry later. Some member states do not disclose name and address.
+- ISIR has no bulk query: one `find()` is one request, 0.1–0.25 s observed.
 - Default timeout 10 s per request (idle and total), including the time a request waits queued at the source.
 
 The operators publish terms of use. The library is stateless and does not enforce them; a breach can get your IP
@@ -547,6 +593,7 @@ address restricted or blocked, so throttle in your application (all workers behi
 | ARES   | at most 500 requests per minute; no "larger number of simultaneous requests" from automated clients (no figure is published); no repeated identical or mostly invalid requests, no probing with random data                                   | [ares.gov.cz › Info pro vývojáře](https://ares.gov.cz/stranky/vyvojar-info), [mf.gov.cz › ARES](https://mf.gov.cz/cs/ministerstvo/informacni-systemy/ares)        |
 | ADIS   | at most 4 requests in parallel, 2 000 requests per hour and 10 000 requests per 24 hours (one request = one call with up to 100 DIČ); no repeated identical requests. Scheduled maintenance every Sunday 3:00–4:00                            | [MOJE daně › Dokumentace › webová služba](https://adisspr.mfcr.cz/pmd/dokumentace/webove-sluzby-spolehlivost-platcu)                                              |
 | VIES   | a global and a per-member-state cap on concurrent requests, counted across all users; the thresholds are not published. A request above the cap is rejected (`*_MAX_CONCURRENT_REQ*`); abusive use gets the IP address blocked (`IP_BLOCKED`) | [VIES › FAQ (Q15)](https://ec.europa.eu/taxation_customs/vies/#/faq), [Technical information](https://ec.europa.eu/taxation_customs/vies/#/technical-information) |
+| ISIR   | no limits or terms published; the service is undocumented apart from its XSD and listens on port 8443                                                                                                                                         | —                                                                                                                                                                 |
 
 - The library does no caching, retrying, rate limiting, scheduling or persistence. Add what you need around it (cache
   profiles, retry `ServiceUnavailable` with back-off, queue lookups).

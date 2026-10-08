@@ -19,6 +19,7 @@ $http = Symfony\Component\HttpClient\HttpClient::create();
 $ares = new IdSign\BusinessRegisters\Ares\AresClient($http);            // implements CompanyDirectory
 $vat = new IdSign\BusinessRegisters\Adis\VatRegisterClient($http);      // implements VatRegister
 $vies = new IdSign\BusinessRegisters\Vies\ViesClient($http);            // implements Vies
+$isir = new IdSign\BusinessRegisters\Isir\InsolvencyClient($http);      // implements InsolvencyRegister; port 8443
 $lookup = new IdSign\BusinessRegisters\CompanyLookup($ares, $vat, $vies, viesRequester: null);  // ?VatId, see VIES
 ```
 
@@ -104,6 +105,18 @@ check(VatId|string $vatId, VatId|string|null $requester = null, ?Vies\TraderDeta
 // TraderDetails(name?, street?, postalCode?, city?, companyType?) — null and blank fields not sent, others unchanged
 // ViesResult: vatId, valid, name?, address?, nameMatch?, streetMatch?, postalCodeMatch?, cityMatch?,
 //             companyTypeMatch? (?MatchResult: Valid | Invalid | NotProcessed), consultationNumber?, checkedAt (UTC)
+
+// Isir\InsolvencyRegister — one request per call, always every proceeding (ended ones too)
+find(CompanyId|string $id): Isir\InsolvencyProceedings   // empty = not on the list NOW (§ 425 removes after 5 years)
+// InsolvencyProceedings (readonly, IteratorAggregate, Countable): proceedings (list), synchronisedAt (?DateTimeImmutable,
+// Prague local time, freshness hint only; absent on an empty result), ongoing(): list<…>, hasOngoing(): bool
+// InsolvencyProceeding (readonly, one row per debtor; spouses = two rows): companyId?, birthNumber? (string as
+// received), senate, caseType, caseNumber, year, court?, bornOn?, titleBefore?, titleAfter?, firstName?, name?,
+// addressKind?, address? (Address), stateCode? (raw string: NEVYRIZENA, ÚPADEK, KONKURS, REORGANIZ, ODDLUŽENÍ,
+// PRAVOMOCNA, ODSKRTNUTA, …), detailUrl?, otherDebtorInProceeding, insolvencyDeclaredOn?, endedOn?
+$p->reference(): string                   // "95 INS 12575/2022"
+$p->isOngoing(): bool                     // endedOn null AND stateCode not ODSKRTNUTA/PRAVOMOCNA/VYRIZENA/MYLNÝ ZÁP.;
+                                          // missing/unknown state = ongoing; KONKURS/ÚPADEK can be ended
 
 // Value types
 CompanyId::parse(string): CompanyId        // ' 452 746 49 ', '64581' -> '00064581'; checksum; InvalidInput
@@ -212,7 +225,7 @@ field in `*Match` (`null` = VIES did not return it). Many member states, CZ and 
   the message ends with ` (error code X)`; `errorCode` itself is raw (untrusted text).
 - Messages never contain response text or record data: only your input id, the HTTP status and, for a transport
   failure, the HTTP client's error text.
-- `Source`: `Ares`, `Adis`, `Vies`; the case `Isir` is reserved and no exception carries it.
+- `Source`: `Ares`, `Adis`, `Vies`, `Isir`.
 - Facade: only ARES errors propagate; `ServiceUnavailable`/`InvalidResponse` of a section become `Unavailable`,
   `InvalidInput` of a section becomes `Rejected`, both + `error()`. Requesting a section without its client is
   `\LogicException` before any request.
@@ -224,6 +237,9 @@ field in `*Match` (`null` = VIES did not return it). Many member states, CZ and 
 - VIES: HTTP 200 bodies with `errorWrappers` are errors (`INVALID_INPUT`, `INVALID_REQUESTER_INFO` -> `InvalidInput`;
   all other and unknown codes -> `ServiceUnavailable`), never `valid:false`. HTTP 400 -> `InvalidInput`, other non-200
   -> `ServiceUnavailable`, `errorCode` from the body when readable.
+- ISIR: `WS2` -> empty collection; `WS4`, `SQL1`, `SERVER1`, SOAP Fault, HTTP != 200 -> `ServiceUnavailable` (code or
+  `faultcode` as `errorCode`); `WS1`, `WS3`, unknown code, truncated answer, more than 100 rows (incomplete list,
+  never silently cut) -> `InvalidResponse`.
 - ARES search above 1 000 matches: `InvalidInput`, `errorCode` `VYSTUP_PRILIS_MNOHO_VYSLEDKU`; ask for a narrower query.
 
 ## Limits

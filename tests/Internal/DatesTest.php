@@ -115,6 +115,83 @@ final class DatesTest extends TestCase
         self::assertNull(Dates::dateTimeUtc($input));
     }
 
+    /**
+     * @return iterable<string, array{string, string}>
+     */
+    public static function providePragueDateTimes(): iterable
+    {
+        yield 'zulu suffix is not a zone' => ['2026-10-08T09:26:35.000Z', '2026-10-08T09:26:35+02:00'];
+        yield 'explicit offset is ignored' => ['2026-10-08T09:26:35+02:00', '2026-10-08T09:26:35+02:00'];
+        yield 'foreign offset is ignored' => ['2026-10-08T09:26:35-05:00', '2026-10-08T09:26:35+02:00'];
+        yield 'compact offset is ignored' => ['2026-10-08T09:26:35+0530', '2026-10-08T09:26:35+02:00'];
+        yield 'no zone suffix' => ['2026-10-08T09:26:35', '2026-10-08T09:26:35+02:00'];
+        yield 'space separator' => ['2026-10-08 09:26:35', '2026-10-08T09:26:35+02:00'];
+        yield 'fraction is dropped' => ['2026-10-08T09:26:35.987Z', '2026-10-08T09:26:35+02:00'];
+        yield 'winter value keeps the winter offset' => ['2026-01-15T09:26:35.000Z', '2026-01-15T09:26:35+01:00'];
+        yield 'summer value keeps the summer offset' => ['2026-07-15T09:26:35.000Z', '2026-07-15T09:26:35+02:00'];
+        yield 'leap day' => ['2024-02-29T23:59:59Z', '2024-02-29T23:59:59+01:00'];
+    }
+
+    #[DataProvider('providePragueDateTimes')]
+    public function testPragueDateTimeReadsTheClockValueAsLocalTimeWhateverTheSuffix(string $input, string $expected): void
+    {
+        $dateTime = Dates::dateTimePrague($input);
+
+        self::assertNotNull($dateTime);
+        self::assertSame($expected, $dateTime->format('c'));
+        self::assertSame('Europe/Prague', $dateTime->getTimezone()->getName());
+    }
+
+    public function testPragueDateTimeDropsTheFraction(): void
+    {
+        $dateTime = Dates::dateTimePrague('2026-10-08T09:26:35.987Z');
+
+        self::assertNotNull($dateTime);
+        self::assertSame('000000', $dateTime->format('u'));
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function provideClockValuesAroundTheSwitchToDaylightSaving(): iterable
+    {
+        yield 'hour skipped by the spring switch' => ['2026-03-29T02:30:00Z'];
+        yield 'hour repeated by the autumn switch' => ['2026-10-25T02:30:00Z'];
+    }
+
+    #[DataProvider('provideClockValuesAroundTheSwitchToDaylightSaving')]
+    public function testPragueDateTimeAcceptsAClockValueAroundAZoneSwitch(string $input): void
+    {
+        self::assertNotNull(Dates::dateTimePrague($input));
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function provideInvalidPragueDateTimes(): iterable
+    {
+        yield 'garbage' => ['garbage'];
+        yield 'empty' => [''];
+        yield 'date without time' => ['2026-10-08'];
+        yield 'date with zone suffix and no time' => ['2026-10-08Z'];
+        yield 'overflowing day' => ['2026-02-30T10:00:00Z'];
+        yield 'leap day in a common year' => ['2026-02-29T10:00:00Z'];
+        yield 'month out of range' => ['2026-13-01T10:00:00Z'];
+        yield 'hour out of range' => ['2026-10-08T25:00:00Z'];
+        yield 'minute out of range' => ['2026-10-08T10:61:00Z'];
+        yield 'relative now' => ['now'];
+        yield 'relative tomorrow' => ['tomorrow'];
+        yield 'leading whitespace' => [' 2026-10-08T09:26:35Z'];
+        yield 'trailing garbage' => ['2026-10-08T09:26:35Zx'];
+        yield 'named zone' => ['2026-10-08T09:26:35 Europe/London'];
+    }
+
+    #[DataProvider('provideInvalidPragueDateTimes')]
+    public function testUnparsablePragueDateTimeYieldsNull(string $input): void
+    {
+        self::assertNull(Dates::dateTimePrague($input));
+    }
+
     public function testHelperCannotBeInstantiated(): void
     {
         $constructor = (new \ReflectionClass(Dates::class))->getConstructor();
