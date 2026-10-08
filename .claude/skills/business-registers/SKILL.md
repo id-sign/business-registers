@@ -1,13 +1,13 @@
 ---
 name: business-registers
-description: Typed PHP client for Czech business registers (ARES, VAT register ADIS, VIES). Use in a PHP project with id-sign/business-registers when looking up a Czech company by IČO, validating IČO or DIČ, checking VAT payer status, unreliable payer, published bank accounts, or EU VAT id validity (VIES), or when writing tests for code that uses the library.
+description: Typed PHP client for Czech business registers (ARES, VAT register ADIS, VIES, insolvency register ISIR). Use in a PHP project with id-sign/business-registers when looking up a Czech company by IČO, validating IČO or DIČ, checking VAT payer status, unreliable payer, published bank accounts, EU VAT id validity (VIES) or insolvency proceedings (ISIR), or when writing tests for code that uses the library.
 ---
 
 # business-registers (id-sign/business-registers v0.1.0)
 
 Stateless PHP 8.4+ library. It covers ARES (company identity), the VAT register ADIS (VAT payer, unreliable payer,
-published bank accounts) and VIES (EU VAT id validity). Not covered: register extracts, the insolvency register (ISIR),
-ARES code lists and the ARES change feed.
+published bank accounts), VIES (EU VAT id validity) and the insolvency register ISIR (proceedings by IČO). Not
+covered: register extracts, ARES code lists and the ARES change feed.
 
 ## Setup
 
@@ -185,8 +185,8 @@ Address: text, street, streetName, houseNumber, houseNumberType, orientationNumb
 - `Company::$taxOfficeCode` (ARES `financniUrad`: workplace or `013`) and `VatSubject`/`UnreliablePayer::$taxOfficeCode`
   (ADIS `cisloFu`: regional office 451–464 or `013`) are codes of the same list `FinancniUrad`; equal only for
   Specialised Tax Office subjects, never compare them across sources.
-- `Insolvency = Active` can be a closed proceeding; `Bankruptcy` (CEÚ) covers only pre-2008 proceedings; useless for
-  insolvency.
+- `Insolvency = Active` can be a closed proceeding (ISIR decides: `isInInsolvency()`); `Bankruptcy` (CEÚ) covers only
+  pre-2008 proceedings, useless.
 - 404 / `null` = "not in ARES", usually also for deleted subjects. A subject without IČO has `id === null` and an
   `aresId` like `ARES_########`.
 - A future `ceasedOn` is a recorded end of an authorisation (natural persons), not a subject that has ceased; a company in
@@ -196,12 +196,12 @@ Address: text, street, streetName, houseNumber, houseNumberType, orientationNumb
 - ADIS and ARES give no VAT registration start/end date or history.
 
 **VIES**: an invalid id is `valid === false`, not an exception. `name`/`address` are null where the member state does
-not disclose them (Germany). `consultationNumber` only when a requester is passed. `Vies::check()` takes the requester
-as `VatId|string|null`; an empty string is `InvalidInput` (no request), so map empty config to `null` (Symfony
-`%env(default::VIES_REQUESTER)%`). `CompanyLookup` takes `?VatId $viesRequester`: build it with `VatId::parse()` (a
-factory in Symfony), not from a raw config string. With `TraderDetails` VIES compares each given field and answers per
-field in `*Match` (`null` = VIES did not return it). Many member states, CZ and IE among them, always answer
-`NotProcessed`; ES hides name/address, so matching is the official way to verify a Spanish trader.
+not disclose them (Germany). `consultationNumber` only when a requester is passed. An empty requester string is
+`InvalidInput` (no request): map empty config to `null` (Symfony `%env(default::VIES_REQUESTER)%`). `CompanyLookup`
+takes `?VatId $viesRequester`: build it with `VatId::parse()` (a factory in Symfony), not from a raw config string.
+With `TraderDetails` VIES compares each given field and answers per field in `*Match` (`null` = not returned). Many
+member states, CZ and IE among them, always answer `NotProcessed`; ES hides name/address, so matching is the official
+way to verify a Spanish trader.
 
 ## Identifiers
 
@@ -216,9 +216,9 @@ field in `*Match` (`null` = VIES did not return it). Many member states, CZ and 
   request order, no global order.
 - A string id is validated strictly (check digit included) everywhere; a `CompanyId` object is taken as it is.
   `$company->id` from ARES may fail the check digit (active subjects do: `00123562`), and one such string fails a whole
-  `findMany()` / `byCompanyIds()` call before any request. Re-hydrate ids stored from ARES with
-  `CompanyId::fromRegister()` (or keep the `CompanyId` object); `parse()` and plain strings are for user input only —
-  never re-parse a register id's string.
+  `findMany()` / `byCompanyIds()` call before any request. Re-hydrate ids stored from ARES with `fromRegister()` (or
+  keep the `CompanyId` object); `parse()` and plain strings are for user input only, never for a register id's string.
+- ISIR `birthNumber` is a string as received, never normalised or validated; personal data.
 
 ## Exceptions (all implement `Exception\ExceptionInterface`)
 
@@ -251,23 +251,22 @@ field in `*Match` (`null` = VIES did not return it). Many member states, CZ and 
 
 ## Limits
 
-100 ids per batch (chunked automatically, sent in waves of `maxConcurrency` batches; result order as if sequential;
-the first failure in sending order is thrown, the rest of its wave is cancelled and no further wave is sent); search max 1 000 results (`limit`
-1-1 000, at least one non-blank criterion); ADIS down nightly 0:00-0:10; VIES and member states throttle
-(`ServiceUnavailable`, retry later); timeout 10 s default (use more for `unreliablePayers()`).
+100 ids per batch (chunked automatically, sent in waves of `maxConcurrency` batches; result order as if sequential; the
+first failure in sending order is thrown, the rest of its wave is cancelled, no further wave is sent); search max 1 000
+results (`limit` 1-1 000, a non-blank criterion required); ADIS down nightly 0:00-0:10; VIES and member states throttle
+(`ServiceUnavailable`, retry later); ISIR has no bulk query; timeout 10 s default (more for `unreliablePayers()`).
 
 Operator terms (not enforced by the library; a breach can get the IP blocked; all workers behind one IP count
 together): ARES max 500 requests/min and no "larger number" of simultaneous requests (no figure published); ADIS max
 4 parallel requests, 2 000/hour, 10 000/24 h (one request = up to 100 DIČ), maintenance Sunday 3:00-4:00; VIES
-global and per-member-state concurrency caps shared by all users (thresholds not published). The library does not
-count requests per minute/hour/day. Never fan out unbounded.
+global and per-member-state concurrency caps shared by all users (thresholds not published); ISIR none published.
+The library does not count requests per minute/hour/day. Never fan out unbounded.
 
 ## What the library does not do
 
 No caching, retrying, rate limiting, scheduling or persistence; concurrency only inside one `findMany()`, bounded by
 `maxConcurrency`, never across calls — the project does the rest (cache profiles, retry `ServiceUnavailable` with
-back-off, queue bulk work). No IBAN check-digit validation. No extracts of the public/trade register, no insolvency
-register, no ARES code lists or change feed.
+back-off, queue bulk work). No IBAN check-digit validation.
 
 For change tracking snapshot the DTOs (`$profile->company`, `->vat`, `->vies`, `->insolvencies`), not the whole profile:
 `serialize($profile)` can fail on stored exceptions. `json_encode($profile)` works.
@@ -275,9 +274,9 @@ For change tracking snapshot the DTOs (`$profile->company`, `->vat`, `->vies`, `
 ## Typical code
 
 ```php
-$profile = $lookup->byCompanyId($ico, Section::Vat, Section::Vies);   // null: not in ARES
-if (null === $profile) { /* unknown or deleted company */ }
+$profile = $lookup->byCompanyId($ico, Section::Vat, Section::Insolvency);   // null: not in ARES (unknown or deleted)
 $payer = $profile->isVatPayer();                       // true / false / null (unknown, retry)
+$insolvent = $profile->isInInsolvency();               // true / false / null, the same way
 if (!$profile->isComplete()) { /* a section Unavailable/Rejected: do not trust absent flags */ }
 
 $requested = array_map(CompanyId::fromRegister(...), $icosFromDb);   // stored from $company->id; parse() is for user input only
@@ -289,12 +288,12 @@ $profiles = $lookup->byCompanyIds($requested, Section::Vat);   // CompanyProfile
 
 ## Testing
 
-Depend on `CompanyDirectory`, `VatRegister`, `Vies`, `InsolvencyRegister` and double them. Build collections with `new Companies([$company,
-...])` / `new VatSubjects([...])` / `new CompanyProfiles([...])` (every company needs an IČO, ids unique, else
-`InvalidInput`); build `Company`, `VatSubject`, `ViesResult` and `CompanyProfile` with named constructor arguments.
-`Company` has no defaults: pass all 17, `registrations: new Registrations([AresRegister::Vat->value =>
-RegistrationStatus::Active])`; every `Address` argument is optional; `CompanyProfile`: pass `insolvencies:` (no
-default), `statuses`/`errors` keyed by `Section::name`. Production URLs: `AresClient::ENDPOINT`, `VatRegisterClient::ENDPOINT`, `ViesClient::ENDPOINT`. To test
-the clients, pass a `Symfony\Component\HttpClient\MockHttpClient`. The VIES test service
-(`https://ec.europa.eu/taxation_customs/vies/rest-api/check-vat-test-service`, numbers `100`-`601`, e.g. `DE100`) works
-through the `$endpoint` argument. Do not call the live registers from unit tests.
+Depend on `CompanyDirectory`, `VatRegister`, `Vies`, `InsolvencyRegister` and double them. Build collections with
+`new Companies([$company, ...])` / `new VatSubjects([...])` / `new CompanyProfiles([...])` (every company needs an IČO,
+ids unique, else `InvalidInput`) and `new InsolvencyProceedings([...], synchronisedAt: null)`; build the DTOs with
+named constructor arguments. `Company` has no defaults: pass all 17, `registrations: new
+Registrations([AresRegister::Vat->value => RegistrationStatus::Active])`; every `Address` argument is optional;
+`CompanyProfile`: pass `insolvencies:` (no default), `statuses`/`errors` keyed by `Section::name`. Production URLs:
+`ENDPOINT` of each client. To test the clients, pass a `Symfony\Component\HttpClient\MockHttpClient`. The VIES test
+service (`https://ec.europa.eu/taxation_customs/vies/rest-api/check-vat-test-service`, numbers `100`-`601`, e.g.
+`DE100`) works through the `$endpoint` argument. Do not call the live registers from unit tests.

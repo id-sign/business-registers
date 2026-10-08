@@ -4,6 +4,8 @@ paths:
   - "src/Ares/AresClient.php"
   - "src/Adis/VatRegisterClient.php"
   - "src/Adis/Internal/ResponseParser.php"
+  - "src/Isir/InsolvencyClient.php"
+  - "src/Isir/Internal/ResponseParser.php"
   - "src/Vies/ViesClient.php"
 ---
 

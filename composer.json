@@ -1,6 +1,6 @@
 {
     "name": "id-sign/business-registers",
-    "description": "Typed PHP client for Czech business registers: ARES, VAT register (ADIS) and VIES.",
+    "description": "Typed PHP client for Czech business registers: ARES, VAT register (ADIS), VIES and the insolvency register (ISIR).",
     "type": "library",
     "license": "MIT",
     "homepage": "https://github.com/id-sign/business-registers",
@@ -8,7 +8,7 @@
         "issues": "https://github.com/id-sign/business-registers/issues",
         "source": "https://github.com/id-sign/business-registers"
     },
-    "keywords": ["ares", "adis", "vies", "vat", "dph", "ico", "dic", "czech"],
+    "keywords": ["ares", "adis", "vies", "isir", "vat", "dph", "ico", "dic", "insolvency", "czech"],
     "require": {
         "php": ">=8.4",
         "ext-dom": "*",
