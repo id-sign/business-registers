@@ -46,7 +46,7 @@ final class CompanyMapper
             seat: null === $seat ? null : self::address($seat),
             deliveryAddressLines: self::deliveryAddressLines($subject->optionalObject('adresaDorucovaci')),
             establishedOn: $subject->optionalDate('datumVzniku'),
-            dissolvedOn: $subject->optionalDate('datumZaniku'),
+            ceasedOn: $subject->optionalDate('datumZaniku'),
             updatedOn: $subject->optionalDate('datumAktualizace'),
             naceCodes: $subject->optionalStringList('czNace'),
             naceCodes2008: $subject->optionalStringList('czNace2008'),

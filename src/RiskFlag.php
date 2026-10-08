@@ -12,11 +12,11 @@ enum RiskFlag
     /**
      * ARES datumZaniku (the day the subject ceased to exist or its registration ended — zánik, NOZ § 185: deletion from
      * the register; for a natural person the end of the recorded authorisation) is not after today (midnight
-     * Europe/Prague); see Company::isDissolved(). It is not the dissolution (zrušení, NOZ § 168): a dissolved company
+     * Europe/Prague); see Company::hasCeased(). It is not the dissolution (zrušení, NOZ § 168): a dissolved company
      * in liquidation stays active here, see InLiquidation. ARES carries a future datumZaniku for some active subjects;
      * the flag is raised only once the date has come.
      */
-    case Dissolved;
+    case Ceased;
 
     /**
      * The name contains the standalone phrase "v likvidaci" anywhere (case-insensitive, any whitespace between the words),
@@ -43,7 +43,7 @@ enum RiskFlag
     case UnreliablePerson;
 
     /**
-     * ARES Vat is Dissolved or Historical, the subject is not in an active VAT group, and an Ok VAT section does not say
+     * ARES Vat is Ended or Historical, the subject is not in an active VAT group, and an Ok VAT section does not say
      * the subject is a VAT payer (ADIS decides; ARES can lag behind it).
      */
     case VatRegistrationEnded;

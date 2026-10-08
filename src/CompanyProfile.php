@@ -132,7 +132,7 @@ final readonly class CompanyProfile
         $vies = SectionStatus::Ok === $this->status(Section::Vies) ? $this->vies : null;
 
         return match ($flag) {
-            RiskFlag::Dissolved => $this->company->isDissolved(),
+            RiskFlag::Ceased => $this->company->hasCeased(),
             // The phrase stands anywhere in the name; on each side only the start/end, whitespace, a quote (with ARES's
             // ´ and ` substitutes), a comma, a dot, a parenthesis, a slash or a dash may touch it, so "vlikvidaci" or
             // "Kov likvidaci" do not match.
@@ -141,7 +141,7 @@ final readonly class CompanyProfile
             RiskFlag::UnreliableVatPayer => null !== $vat && $vat->unreliable && $vat->isVatPayer(),
             RiskFlag::UnreliablePerson => SubjectType::UnreliablePerson === $vat?->type
                 || (null !== $vat && $vat->unreliable && SubjectType::IdentifiedPerson === $vat->type),
-            RiskFlag::VatRegistrationEnded => \in_array($registrations->status(AresRegister::Vat), [RegistrationStatus::Dissolved, RegistrationStatus::Historical], true)
+            RiskFlag::VatRegistrationEnded => \in_array($registrations->status(AresRegister::Vat), [RegistrationStatus::Ended, RegistrationStatus::Historical], true)
                 && !$registrations->isActive(AresRegister::VatGroup)
                 && true !== $vat?->isVatPayer(),
             RiskFlag::NoPublishedBankAccount => null !== $vat && $vat->isVatPayer() && [] === $vat->activeBankAccounts(),

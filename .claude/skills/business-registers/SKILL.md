@@ -70,10 +70,10 @@ new CompanySearch(name:, address:, municipalityCode: ?int, legalFormCodes:, nace
 
 // Ares\Company (readonly): aresId, id (?CompanyId), name, legalFormCode, vatId (?VatId), groupVatId (?VatId),
 // taxOfficeCode (ARES financniUrad: workplace or 013 Specialised Tax Office), seat (?Address), deliveryAddressLines,
-// establishedOn, dissolvedOn, updatedOn (?DateTimeImmutable), naceCodes, naceCodes2008, fileNumber, primarySource, registrations
+// establishedOn, ceasedOn, updatedOn (?DateTimeImmutable), naceCodes, naceCodes2008, fileNumber, primarySource, registrations
 $company->vatLookupId(): ?VatId          // groupVatId ?? vatId: the ONLY id to send to ADIS and VIES
 $company->isNaturalPerson(): bool        // legal forms 100, 101-108, 424, 425
-$company->isDissolved(?DateTimeImmutable $on = null): bool   // dissolvedOn <= $on's calendar day; default today, Europe/Prague
+$company->hasCeased(?DateTimeImmutable $on = null): bool   // ceasedOn <= $on's calendar day; default today, Europe/Prague
 $company->registrations->status(Ares\AresRegister $r): Ares\RegistrationStatus   // also active(), isActive($r)
 
 // Ares\Companies, Adis\VatSubjects and CompanyProfiles (readonly, IteratorAggregate over values, Countable)
@@ -134,12 +134,12 @@ Address: text, street, streetName, houseNumber, houseNumberType, orientationNumb
 
 | `RiskFlag` | Condition | Section |
 |---|---|---|
-| `Dissolved` | ARES `datumZaniku` (end of existence or registration, not the dissolution decision) is today or past (Europe/Prague); a future date = no flag | |
+| `Ceased` | ARES `datumZaniku` (end of existence or registration, not the dissolution decision) is today or past (Europe/Prague); a future date = no flag | |
 | `InLiquidation` | name contains the standalone phrase "v likvidaci" anywhere, also before the legal form or in parentheses; legal persons only, never for natural persons or foreign branches | |
 | `InsolvencyRecord` | ARES lists an insolvency record, possibly closed; not proof of current insolvency | |
 | `UnreliableVatPayer` | ADIS `nespolehlivyPlatce` on a VAT payer or VAT group (`isVatPayer()`) | Vat |
 | `UnreliablePerson` | ADIS: unreliable person, or an identified person marked unreliable | Vat |
-| `VatRegistrationEnded` | ARES VAT registration Dissolved/Historical and no active VAT group; suppressed only by an `Ok` Vat section whose subject is a payer | (Vat can suppress) |
+| `VatRegistrationEnded` | ARES VAT registration Ended/Historical and no active VAT group; suppressed only by an `Ok` Vat section whose subject is a payer | (Vat can suppress) |
 | `NoPublishedBankAccount` | payer or VAT group without active published account | Vat |
 | `ViesInvalid` | VIES says invalid | Vies |
 
@@ -156,7 +156,7 @@ Address: text, street, streetName, houseNumber, houseNumberType, orientationNumb
 **ARES is a pointer, not an answer.**
 - A filled `vatId` does not make a VAT payer; ADIS decides (`SubjectType::VatPayer` / `VatGroup`). ARES `Vat = Active`
   also covers identified persons.
-- A VAT group member has a `groupVatId`; its `vatId` is `null` or its former own DIČ (ARES `Vat = Dissolved` or
+- A VAT group member has a `groupVatId`; its `vatId` is `null` or its former own DIČ (ARES `Vat = Ended` or
   `Nonexistent`). Ask ADIS/VIES with `vatLookupId()` (`groupVatId ?? vatId`), never with `vatId`; ADIS answers for the
   group, rarely still for the member's own DIČ too, and the facade asks the group only.
 - Never derive a DIČ from an IČO. Natural persons have a nine- or ten-digit DIČ: the birth number (nine digits for
@@ -169,9 +169,9 @@ Address: text, street, streetName, houseNumber, houseNumberType, orientationNumb
   insolvency.
 - 404 / `null` = "not in ARES", usually also for deleted subjects. A subject without IČO has `id === null` and an
   `aresId` like `ARES_########`.
-- A future `dissolvedOn` is a recorded end of an authorisation (natural persons), not a dissolved subject; a company in
+- A future `ceasedOn` is a recorded end of an authorisation (natural persons), not a subject that has ceased; a company in
   liquidation is active with `InLiquidation`; a subject that has really ceased to exist is usually 404 / `null`.
-  ARES `Vat = Dissolved` can lag behind ADIS; `VatRegistrationEnded` yields to an `Ok` payer.
+  ARES `Vat = Ended` can lag behind ADIS; `VatRegistrationEnded` yields to an `Ok` payer.
 - `RegistrationStatus::Unknown` = a value added by ARES after this version; an absent key = `Nonexistent`.
 - ADIS and ARES give no VAT registration start/end date or history.
 

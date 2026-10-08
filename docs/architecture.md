@@ -99,8 +99,8 @@ interface and use it for test doubles.
   each side is absent or one of whitespace, a straight or typographic quote (`"'„“”‘’‚‛‟«»‹›`), the ARES quote
   substitutes `´` and `` ` ``, `,`, `.`, `(`, `)`, `/` or a dash (`\p{Pd}`); "vlikvidaci" and "Kov likvidaci" stay
   unmatched. `RiskFlag::InsolvencyRecord` comes from ARES `Insolvency = Active`, which can be a closed proceeding.
-- `RiskFlag::Dissolved` is `Company::isDissolved()`: `dissolvedOn` not after today at midnight Europe/Prague;
-  `dissolvedOn` is ARES `datumZaniku` (zánik, not zrušení). `isDissolved()` is the only place the library reads the
+- `RiskFlag::Ceased` is `Company::hasCeased()`: `ceasedOn` not after today at midnight Europe/Prague;
+  `ceasedOn` is ARES `datumZaniku` (zánik, not zrušení). `hasCeased()` is the only place the library reads the
   clock; the optional `$on` keeps tests deterministic. `UnreliableVatPayer` is `nespolehlivyPlatce` on a payer or
   group (`isVatPayer()`); `UnreliablePerson` is type `UnreliablePerson` or `nespolehlivyPlatce` on an identified
   person. `VatRegistrationEnded` is ARES-derived and yields only to an `Ok` section `Vat` whose subject

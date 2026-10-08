@@ -13,10 +13,10 @@ namespace IdSign\BusinessRegisters\Ares;
  *   CZ00101494, is Active here but an identified person in ADIS). Only the VAT register (ADIS)
  *   decides whether a subject is a VAT payer.
  * - Company::$vatId stays filled after the VAT registration ended (26863154 has a VAT id with
- *   Vat = Dissolved). A filled VAT id does not mean a VAT payer.
+ *   Vat = Ended). A filled VAT id does not mean a VAT payer.
  * - A member of a VAT group has a group VAT id; its own VAT id is either null (Komerční banka, 45317054:
  *   no VAT id, group VAT id CZ699001182, Vat = Nonexistent, VatGroup = Active) or its former own VAT id
- *   (21985685, Vat = Dissolved). The VAT register answers for the group under the group VAT id; in rare
+ *   (21985685, Vat = Ended). The VAT register answers for the group under the group VAT id; in rare
  *   cases it still answers the member's own VAT id as a VAT payer as well. Query it with
  *   Company::vatLookupId(), never with Company::$vatId; a VAT id derived from the company id is usually
  *   not found there.

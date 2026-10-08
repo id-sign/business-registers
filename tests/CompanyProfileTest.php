@@ -122,7 +122,7 @@ final class CompanyProfileTest extends TestCase
         );
         self::assertSame(
             [
-                'Dissolved',
+                'Ceased',
                 'InLiquidation',
                 'InsolvencyRecord',
                 'UnreliableVatPayer',
@@ -286,28 +286,28 @@ final class CompanyProfileTest extends TestCase
         self::assertSame([], $profile->flags());
     }
 
-    public function testDissolvedFlagIsRaisedWhenTheCompanyHasADissolutionDate(): void
+    public function testCeasedFlagIsRaisedWhenTheCompanyHasAnEndDate(): void
     {
-        $profile = self::profile(CompanyFactory::create(dissolvedOn: new \DateTimeImmutable('2020-01-31')));
+        $profile = self::profile(CompanyFactory::create(ceasedOn: new \DateTimeImmutable('2020-01-31')));
 
-        self::assertSame([RiskFlag::Dissolved], $profile->flags());
-        self::assertTrue($profile->hasFlag(RiskFlag::Dissolved));
+        self::assertSame([RiskFlag::Ceased], $profile->flags());
+        self::assertTrue($profile->hasFlag(RiskFlag::Ceased));
     }
 
-    public function testDissolvedFlagIsNotRaisedForAScheduledDissolutionInTheFuture(): void
+    public function testCeasedFlagIsNotRaisedForAFutureEndDate(): void
     {
-        $company = CompanyMapper::map(JsonReader::fromJson(FixtureLoader::read('Ares/find-future-dissolution.json'), Source::Ares));
+        $company = CompanyMapper::map(JsonReader::fromJson(FixtureLoader::read('Ares/find-future-ceased-on.json'), Source::Ares));
         $profile = self::profile($company);
 
         // The recorded date flips to the past in December 2035, on purpose.
-        self::assertSame('2035-12-10', $company->dissolvedOn?->format('Y-m-d'));
-        self::assertFalse($profile->hasFlag(RiskFlag::Dissolved));
+        self::assertSame('2035-12-10', $company->ceasedOn?->format('Y-m-d'));
+        self::assertFalse($profile->hasFlag(RiskFlag::Ceased));
         self::assertSame([], $profile->flags());
     }
 
-    public function testDissolvedFlagIsNotRaisedWithoutADissolutionDate(): void
+    public function testCeasedFlagIsNotRaisedWithoutAnEndDate(): void
     {
-        self::assertFalse(self::profile(CompanyFactory::create(dissolvedOn: null))->hasFlag(RiskFlag::Dissolved));
+        self::assertFalse(self::profile(CompanyFactory::create(ceasedOn: null))->hasFlag(RiskFlag::Ceased));
     }
 
     /**
@@ -394,7 +394,7 @@ final class CompanyProfileTest extends TestCase
     {
         yield 'active' => [RegistrationStatus::Active, true];
         yield 'historical' => [RegistrationStatus::Historical, false];
-        yield 'dissolved' => [RegistrationStatus::Dissolved, false];
+        yield 'ended' => [RegistrationStatus::Ended, false];
         yield 'nonexistent' => [RegistrationStatus::Nonexistent, false];
         yield 'unknown' => [RegistrationStatus::Unknown, false];
     }
@@ -487,10 +487,10 @@ final class CompanyProfileTest extends TestCase
      */
     public static function provideVatRegistrationStatuses(): iterable
     {
-        yield 'vat dissolved, no group' => [RegistrationStatus::Dissolved, RegistrationStatus::Nonexistent, true];
+        yield 'vat ended, no group' => [RegistrationStatus::Ended, RegistrationStatus::Nonexistent, true];
         yield 'vat historical, no group' => [RegistrationStatus::Historical, RegistrationStatus::Nonexistent, true];
         yield 'vat historical, group historical' => [RegistrationStatus::Historical, RegistrationStatus::Historical, true];
-        yield 'vat dissolved, active group' => [RegistrationStatus::Dissolved, RegistrationStatus::Active, false];
+        yield 'vat ended, active group' => [RegistrationStatus::Ended, RegistrationStatus::Active, false];
         yield 'vat historical, active group' => [RegistrationStatus::Historical, RegistrationStatus::Active, false];
         yield 'vat active' => [RegistrationStatus::Active, RegistrationStatus::Nonexistent, false];
         yield 'vat nonexistent' => [RegistrationStatus::Nonexistent, RegistrationStatus::Nonexistent, false];
@@ -515,12 +515,12 @@ final class CompanyProfileTest extends TestCase
     // The ADIS fixture is a real response; the ARES one is the real record of a subject whose ARES VAT registration lags the VAT register.
     public function testVatRegistrationEndedFlagYieldsToAnOkVatSectionThatSaysThePayerIsAPayer(): void
     {
-        $company = CompanyMapper::map(JsonReader::fromJson(FixtureLoader::read('Ares/find-vat-dissolved-payer.json'), Source::Ares));
-        $subjects = ResponseParser::parseSubjects(FixtureLoader::read('Adis/status-vat-dissolved-payer.xml'));
+        $company = CompanyMapper::map(JsonReader::fromJson(FixtureLoader::read('Ares/find-vat-ended-payer.json'), Source::Ares));
+        $subjects = ResponseParser::parseSubjects(FixtureLoader::read('Adis/status-vat-ended-payer.xml'));
         self::assertCount(1, $subjects);
         $profile = self::profile($company, $subjects[0], statuses: self::vatOk());
 
-        self::assertSame(RegistrationStatus::Dissolved, $company->registrations->status(AresRegister::Vat));
+        self::assertSame(RegistrationStatus::Ended, $company->registrations->status(AresRegister::Vat));
         self::assertTrue($profile->isVatPayer());
         self::assertFalse($profile->hasFlag(RiskFlag::VatRegistrationEnded));
     }
@@ -542,7 +542,7 @@ final class CompanyProfileTest extends TestCase
     #[DataProvider('provideVatRegistrationEndedWithAVatAnswer')]
     public function testVatRegistrationEndedFlagDependsOnTheVatSectionOnlyWhenItIsOk(?SubjectType $type, ?SectionStatus $status, bool $expected): void
     {
-        $company = CompanyFactory::create(statuses: [AresRegister::Vat->value => RegistrationStatus::Dissolved]);
+        $company = CompanyFactory::create(statuses: [AresRegister::Vat->value => RegistrationStatus::Ended]);
         $vat = null === $type ? null : self::subject($type, [self::account()]);
         $statuses = null === $status ? [] : [Section::Vat->name => $status];
 
@@ -633,17 +633,17 @@ final class CompanyProfileTest extends TestCase
 
     public function testAresDerivedFlagsStayRaisedWhileSectionsAreUnavailable(): void
     {
-        $company = CompanyFactory::create(dissolvedOn: new \DateTimeImmutable('2020-01-31'));
+        $company = CompanyFactory::create(ceasedOn: new \DateTimeImmutable('2020-01-31'));
         $profile = self::profile($company, statuses: [Section::Vat->name => SectionStatus::Unavailable]);
 
-        self::assertSame([RiskFlag::Dissolved], $profile->flags());
+        self::assertSame([RiskFlag::Ceased], $profile->flags());
     }
 
     public function testFlagsAreListedInTheOrderOfTheEnumCases(): void
     {
         $company = CompanyFactory::create(
             name: 'Test s.r.o. v likvidaci',
-            dissolvedOn: new \DateTimeImmutable('2020-01-31'),
+            ceasedOn: new \DateTimeImmutable('2020-01-31'),
             statuses: [AresRegister::Insolvency->value => RegistrationStatus::Active],
         );
         $profile = self::profile(
@@ -655,7 +655,7 @@ final class CompanyProfileTest extends TestCase
 
         self::assertSame(
             [
-                RiskFlag::Dissolved,
+                RiskFlag::Ceased,
                 RiskFlag::InLiquidation,
                 RiskFlag::InsolvencyRecord,
                 RiskFlag::UnreliableVatPayer,
@@ -668,7 +668,7 @@ final class CompanyProfileTest extends TestCase
 
     public function testHasFlagIsFalseForAFlagThatIsNotRaised(): void
     {
-        self::assertFalse(self::profile()->hasFlag(RiskFlag::Dissolved));
+        self::assertFalse(self::profile()->hasFlag(RiskFlag::Ceased));
     }
 
     /**

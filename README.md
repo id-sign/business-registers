@@ -22,11 +22,11 @@ and the ARES change feed.
 - VAT id (DIČ) and, for a member of a VAT group, the group's VAT id
 - registered seat: full text, street with house numbers, city, district, postal code, county, region, country,
   RÚIAN address point and municipality codes; delivery address lines
-- date of establishment, end of existence or registration (`dissolvedOn`, ARES `datumZaniku`) and last update
+- date of establishment, end of existence or registration (`ceasedOn`, ARES `datumZaniku`) and last update
 - CZ-NACE activity codes (2025 and 2008 classification)
 - public register file number (e.g. `B 1581/MSPH`), tax office code, primary source register
 - status in 16 source registers (public register, trade register, VAT, VAT group, insolvency, …): active, historical,
-  dissolved, suspended, …
+  ended, suspended, …
 - search by name, address text, municipality, legal form, CZ-NACE or tax office (up to 1 000 results)
 
 **VAT register (ADIS)** — by DIČ, for up to 100 DIČ per request:
@@ -49,7 +49,7 @@ and the ARES change feed.
   compares them
 
 **Company profile** — one call that combines the sources above, reports per source whether it answered, and derives
-risk flags: dissolved, in liquidation, insolvency record, unreliable VAT payer, unreliable person, VAT registration
+risk flags: ceased, in liquidation, insolvency record, unreliable VAT payer, unreliable person, VAT registration
 ended, VAT payer without a published bank account, VAT id invalid in VIES. For a list of IČO, one call builds all
 profiles with one ARES and one ADIS request per 100 companies.
 
@@ -140,7 +140,7 @@ $profile->vat?->type;                            // SubjectType::VatPayer
 $profile->vies?->valid;                          // true
 
 $profile->flags();                               // list<RiskFlag>, e.g. [RiskFlag::UnreliableVatPayer]
-$profile->hasFlag(RiskFlag::Dissolved);          // false
+$profile->hasFlag(RiskFlag::Ceased);             // false
 
 if (SectionStatus::Unavailable === $profile->status(Section::Vies)) {
     $profile->error(Section::Vies);              // the ServiceUnavailable or InvalidResponse that caused it
@@ -179,12 +179,12 @@ requested**.
 
 | Flag                     | Raised when                                                                                                                                                                                                                          | Needs           |
 |--------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------|
-| `Dissolved`              | ARES `datumZaniku` — the day the subject ceased to exist (zánik, NOZ § 185: deletion from the register) or its registration ended — is today or in the past (midnight Europe/Prague). Not the dissolution (zrušení): a company in liquidation is still active, see `InLiquidation`. A future date raises nothing (it stays in `$company->dissolvedOn`) | —               |
+| `Ceased`                 | ARES `datumZaniku` — the day the subject ceased to exist (zánik, NOZ § 185: deletion from the register) or its registration ended — is today or in the past (midnight Europe/Prague). Not the dissolution (zrušení): a company in liquidation is still active, see `InLiquidation`. A future date raises nothing (it stays in `$company->ceasedOn`) | —               |
 | `InLiquidation`          | the name contains the standalone phrase "v likvidaci" anywhere: at the end, before the legal form (`… v likvidaci, s.r.o.`), between dashes, slashes or parentheses; case-insensitive. Mandatory suffix for a legal person in liquidation (NOZ § 187 odst. 2); never raised for natural persons, foreign persons and branches, or a dissolution without liquidation | —               |
 | `InsolvencyRecord`       | ARES lists the subject in the insolvency register — a record, possibly a closed one                                                                                                                                                  | —               |
 | `UnreliableVatPayer`     | the VAT register marks a VAT payer or VAT group as unreliable (nespolehlivyPlatce); implies `isVatPayer() === true`                                                                                                                  | `Section::Vat`  |
 | `UnreliablePerson`       | the subject is an unreliable person under §106aa of the VAT Act: the register keeps it as an unreliable person, or marks a non-payer identified person as unreliable                                                                 | `Section::Vat`  |
-| `VatRegistrationEnded`   | ARES VAT registration is `Dissolved` or `Historical`, the subject is not in an active VAT group, and the VAT register (when `Section::Vat` is `Ok`) does not say the subject is a VAT payer                                          | —               |
+| `VatRegistrationEnded`   | ARES VAT registration is `Ended` or `Historical`, the subject is not in an active VAT group, and the VAT register (when `Section::Vat` is `Ok`) does not say the subject is a VAT payer                                          | —               |
 | `NoPublishedBankAccount` | a VAT payer or VAT group without any active published bank account                                                                                                                                                                   | `Section::Vat`  |
 | `ViesInvalid`            | VIES answered that the VAT id is not valid                                                                                                                                                                                           | `Section::Vies` |
 
@@ -211,7 +211,7 @@ before any request is made.
 #### VAT group members
 
 A member of a VAT group has a group DIČ (`groupVatId`); its own `vatId` in ARES is either `null` (Komerční banka,
-`45317054`: group DIČ `CZ699001182`) or its former own DIČ (`21985685`, `05666112`; ARES `Vat = Dissolved` or
+`45317054`: group DIČ `CZ699001182`) or its former own DIČ (`21985685`, `05666112`; ARES `Vat = Ended` or
 `Nonexistent`). ADIS answers for the group under the group DIČ; in rare cases it still answers the member's own DIČ as a
 VAT payer as well. The facade asks the group only: it looks a member up in ADIS and VIES under the group DIČ
 (`Company::vatLookupId()`, `groupVatId ?? vatId`), so `$profile->vat` and `$profile->vies` describe the group. Do the
@@ -310,7 +310,7 @@ $company->vatId;                         // ?VatId — a filled value does not m
 $company->vatLookupId();                 // ?VatId — the one to send to ADIS and VIES
 $company->taxOfficeCode;                 // ?string — ARES financniUrad: workplace (e.g. "293") or "013" Specialised Tax Office; code list FinancniUrad
 $company->isNaturalPerson();             // legal form 100, 101–108, 424, 425
-$company->isDissolved();                 // ARES datumZaniku (end of existence or registration) not after today (Europe/Prague); pass a date to ask for another calendar day
+$company->hasCeased();                   // ARES datumZaniku (end of existence or registration) not after today (Europe/Prague); pass a date to ask for another calendar day
 $company->registrations->active();       // list<AresRegister>
 ```
 
@@ -511,16 +511,16 @@ The ARES status in the 16 source registers (`$company->registrations`) is a poin
 
 | Do not assume                                         | Reality                                                                                                                                                                                                                                                                                                                                                                               |
 |-------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| VAT id filled in ARES = VAT payer                     | the VAT id stays after the registration ended (`26863154` has a DIČ and `Vat = Dissolved`); `Vat = Active` also covers identified persons. Only ADIS decides whether a subject is a VAT payer; `Vat = Dissolved` can lag behind ADIS (`10803351` is a payer in ADIS), so `VatRegistrationEnded` yields to an `Ok` VAT section                                                         |
-| every company has a DIČ of its own                    | a VAT group member has a group DIČ and its own `vatId` is `null` or a former own DIČ (Komerční banka `45317054`: group DIČ `CZ699001182`, no own; `21985685`: former own DIČ, `Vat = Dissolved`). Use `vatLookupId()`, never `vatId`                                                                                                                                                  |
+| VAT id filled in ARES = VAT payer                     | the VAT id stays after the registration ended (`26863154` has a DIČ and `Vat = Ended`); `Vat = Active` also covers identified persons. Only ADIS decides whether a subject is a VAT payer; `Vat = Ended` can lag behind ADIS (`10803351` is a payer in ADIS), so `VatRegistrationEnded` yields to an `Ok` VAT section                                                         |
+| every company has a DIČ of its own                    | a VAT group member has a group DIČ and its own `vatId` is `null` or a former own DIČ (Komerční banka `45317054`: group DIČ `CZ699001182`, no own; `21985685`: former own DIČ, `Vat = Ended`). Use `vatLookupId()`, never `vatId`                                                                                                                                                  |
 | a DIČ can be derived from the IČO                     | natural persons have a nine- or ten-digit DIČ: the birth number (nine digits for births before 1954) or a nine-digit identifier assigned by the tax administrator (starts with 6; daňový řád § 130 odst. 4), which also foreign persons and VAT groups (`CZ699…`) get, and a derived DIČ of a group member is usually not found in ADIS. Always take the DIČ from ARES                                                                                                        |
 | `Insolvency = Active` means in insolvency now         | it stays `Active` after the proceedings ended (České aerolinie `45795908`). Only the insolvency register (ISIR, not covered by this library) tells whether it is current — hence the flag is named `InsolvencyRecord`                                                                                                                                                                 |
 | `Bankruptcy` (CEÚ) reflects insolvency                | it does not: CEÚ (centrální evidence úpadců) holds only bankruptcy (konkurs) and composition (vyrovnání) proceedings under the former Act No. 328/1991 Sb., i.e. opened before 1 January 2008; everything since is in the insolvency register (Act No. 182/2006 Sb. § 432). Sberbank CZ `25083325` in bankruptcy: `Nonexistent`. Do not use it                                                                                                                                                                                                                                                                                                      |
 | every IČO in ARES satisfies the check digit           | no: `00123562`, `29340042` are active. `$company->id` may have `hasValidCheckDigit() === false`; strings you pass stay strict, so re-hydrate ids stored from ARES with `CompanyId::fromRegister()` (§ Storing identifiers); the check digit is a convention of the register administrator, not a legal requirement                                                                                                                                                            |
 | `taxOfficeCode` of ARES and ADIS name the same office | not always. Both are codes of the list `FinancniUrad`. ARES `financniUrad` is the competent workplace (`293` = Územní pracoviště Brno-venkov) or `013` Specialised Tax Office; ADIS `cisloFu` is a regional office 451–464 (`461` = Finanční úřad pro Jihomoravský kraj) or `013`. They are equal only for Specialised Tax Office subjects; never compare or join them across sources |
 | only legal forms 101–108 are natural persons          | also 100 (domestic self-employed natural person, in source `rzp` also a non-entrepreneur natural person), 424 (foreign natural person) and 425 (its branch, named after a person); `isNaturalPerson()` covers all eleven forms                                                                                                                                                        |
-| `datumZaniku` marks the dissolution                   | it is the end of existence (zánik, NOZ § 185) or of the registration, not the dissolution (zrušení, NOZ § 168); a dissolved company in liquidation is active in ARES (`InLiquidation`). ARES carries a future `datumZaniku` for some active subjects (`72396067`, a natural person with an authorisation recorded until 2035-12-10); `Dissolved` is raised only once the date has come (`Company::isDissolved()`)                                                                                                                                                                                              |
-| a deleted subject is returned                         | ARES usually answers 404, so `find()` returns `null`; it can serve a dissolved subject for some days after `datumZaniku`, then `Dissolved` can appear next to `PersonsRegister = Active`                                                                                                                                                                                              |
+| `datumZaniku` marks the dissolution                   | it is the end of existence (zánik, NOZ § 185) or of the registration, not the dissolution (zrušení, NOZ § 168); a dissolved company in liquidation is active in ARES (`InLiquidation`). ARES carries a future `datumZaniku` for some active subjects (`72396067`, a natural person with an authorisation recorded until 2035-12-10); `Dissolved` is raised only once the date has come (`Company::hasCeased()`)                                                                                                                                                                                              |
+| a deleted subject is returned                         | ARES usually answers 404, so `find()` returns `null`; it can serve a subject that has ceased for some days after `datumZaniku`, then `Ceased` can appear next to `PersonsRegister = Active`                                                                                                                                                                                              |
 | statuses are complete                                 | all 16 registers are always present; a key ARES omits is `Nonexistent`; a value ARES adds later is `Unknown`                                                                                                                                                                                                                                                                          |
 
 What the registers do not return: the date a VAT registration started or ended and its history (neither ADIS nor ARES
@@ -577,7 +577,7 @@ $company = new Company(
     seat: null,
     deliveryAddressLines: [],
     establishedOn: null,
-    dissolvedOn: null,
+    ceasedOn: null,
     updatedOn: null,
     naceCodes: [],
     naceCodes2008: [],

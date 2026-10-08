@@ -72,7 +72,7 @@ final class CompanyMapperTest extends TestCase
         self::assertNull($company->groupVatId);
         self::assertSame('013', $company->taxOfficeCode);
         self::assertSame('1992-05-06', $company->establishedOn?->format('Y-m-d'));
-        self::assertNull($company->dissolvedOn);
+        self::assertNull($company->ceasedOn);
         self::assertSame('2026-09-17', $company->updatedOn?->format('Y-m-d'));
         self::assertNotSame([], $company->naceCodes);
         self::assertContains('25620', $company->naceCodes);
@@ -230,7 +230,7 @@ final class CompanyMapperTest extends TestCase
 
         self::assertCount(16, $registrations->statuses);
         self::assertSame(RegistrationStatus::Active, $registrations->status(AresRegister::Vat));
-        self::assertSame(RegistrationStatus::Dissolved, $registrations->status(AresRegister::ExciseTax));
+        self::assertSame(RegistrationStatus::Ended, $registrations->status(AresRegister::ExciseTax));
         self::assertSame(RegistrationStatus::Historical, $registrations->status(AresRegister::Healthcare));
         self::assertSame(RegistrationStatus::Nonexistent, $registrations->status(AresRegister::VatGroup));
     }
