@@ -33,6 +33,7 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\HttpClient\Exception\TransportException;
 
 #[CoversClass(CompanyLookup::class)]
 final class CompanyLookupTest extends TestCase
@@ -1921,6 +1922,56 @@ final class CompanyLookupTest extends TestCase
         self::assertSame(SectionStatus::Unavailable, $failed->status(Section::Insolvency));
         self::assertSame($outage, $failed->error(Section::Insolvency));
         self::assertNull($failed->insolvencies);
+    }
+
+    public function testBulkLookupStopsAskingIsirAfterAConnectionFailure(): void
+    {
+        $outage = new ServiceUnavailable('ISIR request failed', Source::Isir, previous: new TransportException('Connection timed out'));
+        $asked = self::idLog();
+        $lookup = new CompanyLookup(
+            $this->directoryFindingManyOnce([
+                self::bulkCompany('45274649'),
+                self::bulkCompany('28255933'),
+                self::bulkCompany('45317054'),
+            ]),
+            insolvencyRegister: $this->insolvencyRegisterAnswering(
+                ['45274649' => self::proceedings(), '28255933' => $outage, '45317054' => self::proceedings()],
+                $asked,
+                2,
+            ),
+        );
+
+        $profiles = $lookup->byCompanyIds(['45274649', '28255933', '45317054'], Section::Insolvency);
+
+        self::assertSame(['45274649', '28255933'], $asked->getArrayCopy());
+        self::assertSame(SectionStatus::Ok, $profiles->get('45274649')?->status(Section::Insolvency));
+        foreach (['28255933', '45317054'] as $id) {
+            $profile = $profiles->get($id);
+            self::assertNotNull($profile);
+            self::assertSame(SectionStatus::Unavailable, $profile->status(Section::Insolvency));
+            self::assertSame($outage, $profile->error(Section::Insolvency));
+            self::assertNull($profile->insolvencies);
+        }
+    }
+
+    public function testBulkLookupKeepsAskingIsirAfterAServiceError(): void
+    {
+        $dataNotCurrent = new ServiceUnavailable('ISIR data are not current', Source::Isir, 'WS4');
+        $asked = self::idLog();
+        $lookup = new CompanyLookup(
+            $this->directoryFindingManyOnce([self::bulkCompany('45274649'), self::bulkCompany('28255933')]),
+            insolvencyRegister: $this->insolvencyRegisterAnswering(
+                ['45274649' => $dataNotCurrent, '28255933' => self::proceedings()],
+                $asked,
+                2,
+            ),
+        );
+
+        $profiles = $lookup->byCompanyIds(['45274649', '28255933'], Section::Insolvency);
+
+        self::assertSame(['45274649', '28255933'], $asked->getArrayCopy());
+        self::assertSame(SectionStatus::Unavailable, $profiles->get('45274649')?->status(Section::Insolvency));
+        self::assertSame(SectionStatus::Ok, $profiles->get('28255933')?->status(Section::Insolvency));
     }
 
     public function testBulkLookupIsirInvalidResponseOfOneCompanyLeavesTheOthersOk(): void

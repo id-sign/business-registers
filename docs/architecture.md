@@ -139,7 +139,7 @@ consumers depend on the interface and use it for test doubles.
   follows the same pattern over `Section::Insolvency` with one difference: `InsolvencyProceedings::hasOngoing()` for
   `Ok`, `false` for `NotFound`, `null` for `Unavailable`, `Rejected` and `NotApplicable` (a subject without an IČO
   can still be listed under its birth number, so an unasked register is no negative answer), `\LogicException` for
-  `NotRequested`. ISIR is asked directly from `profile()`, one `find()` per company; it has no state to share.
+  `NotRequested`.
 - `SectionStatus` is string-backed; its values are part of the JSON form of a profile and must stay stable.
 - `RiskFlag::InLiquidation` matches the phrase `v\s+likvidaci` (`/iu`) anywhere in the name, provided the character on
   each side is absent or one of whitespace, a straight or typographic quote (`"'„“”‘’‚‛‟«»‹›`), the ARES quote
@@ -162,8 +162,11 @@ consumers depend on the interface and use it for test doubles.
   exception shared by the companies with that lookup id); after an `InvalidInput` with `errorCode`
   `INVALID_REQUESTER_INFO` no further `check()` is sent and the remaining lookup ids get that same exception.
   `Insolvency` is one `InsolvencyRegister::find()` per company, sequentially in `Companies` order, not memoised (ARES
-  de-duplicates the companies) and without a short-circuit: a failure affects only that company. The facade does not
-  chunk; the clients do.
+  de-duplicates the companies). After a connection failure (a `ServiceUnavailable` whose previous exception is a
+  `TransportExceptionInterface`: timeout, refused or blocked connection) no further `find()` is sent and the remaining
+  companies get that same exception, so an unreachable ISIR costs one timeout per call, not one per company. Any
+  other failure (an ISIR error code, an HTTP error, an `InvalidResponse`) affects only that company. The facade does
+  not chunk; the clients do.
 - The statuses follow `byCompanyId()` through one shared per-company step: no id for the section → `NotApplicable`;
   absent from the ADIS answer → `NotFound`. The ADIS call's `ServiceUnavailable` / `InvalidResponse` makes `Vat`
   `Unavailable`, its `InvalidInput` makes it `Rejected`, for every profile in the call; a non-Czech lookup id is not

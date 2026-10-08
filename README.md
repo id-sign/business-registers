@@ -271,8 +271,10 @@ is asked once for all its members). 100 IČO with `Section::Vat` are 1 ARES and 
 batches of 100). VIES has no bulk call: `Section::Vies` makes one `check()` per distinct lookup DIČ (a VAT group is
 checked once for all its members), one after another, so 100 companies with `Vies` take minutes. ISIR has no bulk
 call either: `Section::Insolvency` makes one `find()` per company, one after another in ARES response order —
-typically 0.10–0.25 s each (100 companies ≈ 10–25 s), at worst the ISIR client's `$timeout` per company when ISIR is
-down.
+typically 0.10–0.25 s each (100 companies ≈ 10–25 s). After a connection failure (timeout, refused or blocked
+connection, e.g. port 8443 closed by a firewall) no further ISIR request is sent in that call, and the remaining
+companies get `Insolvency` `Unavailable` with that same exception, so an unreachable ISIR costs one timeout. An ISIR
+error code or an HTTP error affects only its company.
 
 ```php
 use IdSign\BusinessRegisters\CompanyId;

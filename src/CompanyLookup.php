@@ -14,9 +14,11 @@ use IdSign\BusinessRegisters\Exception\InvalidResponse;
 use IdSign\BusinessRegisters\Exception\ServiceUnavailable;
 use IdSign\BusinessRegisters\Internal\Identifiers;
 use IdSign\BusinessRegisters\Internal\ListElement;
+use IdSign\BusinessRegisters\Isir\InsolvencyProceedings;
 use IdSign\BusinessRegisters\Isir\InsolvencyRegister;
 use IdSign\BusinessRegisters\Vies\Vies;
 use IdSign\BusinessRegisters\Vies\ViesResult;
+use Symfony\Contracts\HttpClient\Exception\TransportExceptionInterface;
 
 /**
  * Assembles a company profile from ARES and the requested sections; an outage of a section source
@@ -65,6 +67,7 @@ final readonly class CompanyLookup
             $requested,
             fn (VatId $vatId): ?VatSubject => $this->vatRegister()->find($vatId),
             fn (VatId $vatId): ViesResult => $this->vies()->check($vatId, $this->viesRequester),
+            fn (CompanyId $companyId): InsolvencyProceedings => $this->insolvencyRegister()->find($companyId),
         );
     }
 
@@ -84,9 +87,12 @@ final readonly class CompanyLookup
      * while a company whose lookup id was already answered keeps that answer. Any other VIES failure
      * affects only the companies with that lookup id.
      *
-     * Section Insolvency is one find() per company, sequentially, in the order ARES returns them; a failure
-     * affects only that company; typically 0.10–0.25 s per company (100 companies ≈ 10–25 s), worst case
-     * $timeout per company when ISIR is down.
+     * Section Insolvency is one find() per company, sequentially, in the order ARES returns them; typically
+     * 0.10–0.25 s per company (100 companies ≈ 10–25 s). After a connection failure (a ServiceUnavailable caused
+     * by a transport error: timeout, refused or blocked connection) no further find() is made in that call: every
+     * company not yet asked gets Insolvency Unavailable with that same exception instance, so an unreachable
+     * register costs one timeout, not one per company. Any other failure (an ISIR error code, an HTTP error, an
+     * invalid response) affects only that company.
      *
      * @param list<CompanyId|string> $ids
      *
@@ -167,9 +173,27 @@ final readonly class CompanyLookup
             return $answer;
         };
 
+        /** @var ?ServiceUnavailable $connectionFailure */
+        $connectionFailure = null;
+        $findInsolvencies = function (CompanyId $companyId) use (&$connectionFailure): InsolvencyProceedings {
+            if (null !== $connectionFailure) {
+                throw $connectionFailure;
+            }
+
+            try {
+                return $this->insolvencyRegister()->find($companyId);
+            } catch (ServiceUnavailable $e) {
+                if ($e->getPrevious() instanceof TransportExceptionInterface) {
+                    $connectionFailure = $e;
+                }
+
+                throw $e;
+            }
+        };
+
         $profiles = [];
         foreach ($companies as $company) {
-            $profiles[] = $this->profile($company, $requested, $findVat, $checkVies);
+            $profiles[] = $this->profile($company, $requested, $findVat, $checkVies, $findInsolvencies);
         }
 
         return new CompanyProfiles($profiles);
@@ -201,13 +225,12 @@ final readonly class CompanyLookup
     }
 
     /**
-     * Section Insolvency is asked directly, one find() per company: it has no bulk call and no state to share.
-     *
-     * @param array<string, Section>       $requested
-     * @param \Closure(VatId): ?VatSubject $findVat   answers section Vat for a lookup id
-     * @param \Closure(VatId): ViesResult  $checkVies answers section Vies for a lookup id
+     * @param array<string, Section>                     $requested
+     * @param \Closure(VatId): ?VatSubject               $findVat          answers section Vat for a lookup id
+     * @param \Closure(VatId): ViesResult                $checkVies        answers section Vies for a lookup id
+     * @param \Closure(CompanyId): InsolvencyProceedings $findInsolvencies answers section Insolvency for a company id
      */
-    private function profile(Company $company, array $requested, \Closure $findVat, \Closure $checkVies): CompanyProfile
+    private function profile(Company $company, array $requested, \Closure $findVat, \Closure $checkVies, \Closure $findInsolvencies): CompanyProfile
     {
         $vatLookupId = $company->vatLookupId();
         $vat = null;
@@ -234,7 +257,7 @@ final readonly class CompanyLookup
                         break;
                     case Section::Insolvency:
                         if (null !== $company->id) {
-                            $insolvencies = $this->insolvencyRegister()->find($company->id);
+                            $insolvencies = $findInsolvencies($company->id);
                             $statuses[$name] = SectionStatus::Ok;
                         }
                         break;
