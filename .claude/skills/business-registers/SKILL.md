@@ -134,8 +134,8 @@ Address: text, street, streetName, houseNumber, houseNumberType, orientationNumb
 
 | `RiskFlag` | Condition | Section |
 |---|---|---|
-| `Dissolved` | ARES dissolution date is today or past (Europe/Prague); a future date = scheduled dissolution, no flag | |
-| `InLiquidation` | name contains the standalone phrase "v likvidaci" anywhere, also before the legal form or in parentheses | |
+| `Dissolved` | ARES `datumZaniku` (end of existence or registration, not the dissolution decision) is today or past (Europe/Prague); a future date = no flag | |
+| `InLiquidation` | name contains the standalone phrase "v likvidaci" anywhere, also before the legal form or in parentheses; legal persons only, never for natural persons or foreign branches | |
 | `InsolvencyRecord` | ARES lists an insolvency record, possibly closed; not proof of current insolvency | |
 | `UnreliableVatPayer` | ADIS `nespolehlivyPlatce` on a VAT payer or VAT group (`isVatPayer()`) | Vat |
 | `UnreliablePerson` | ADIS: unreliable person, or an identified person marked unreliable | Vat |
@@ -160,16 +160,18 @@ Address: text, street, streetName, houseNumber, houseNumberType, orientationNumb
   `Nonexistent`). Ask ADIS/VIES with `vatLookupId()` (`groupVatId ?? vatId`), never with `vatId`; ADIS answers for the
   group, rarely still for the member's own DIČ too, and the facade asks the group only.
 - Never derive a DIČ from an IČO. Natural persons have a nine- or ten-digit DIČ: the birth number (nine digits for
-  births before 1954) or a nine-digit number assigned by the tax administrator (starts with 6). A derived DIČ of a group
-  member is usually not found in ADIS.
+  births before 1954) or a nine-digit identifier assigned by the tax administrator (starts with 6; daňový řád § 130
+  odst. 4), also for foreign persons and VAT groups (`CZ699…`). A derived DIČ of a group member is usually not in ADIS.
 - `Company::$taxOfficeCode` (ARES `financniUrad`: workplace or `013`) and `VatSubject`/`UnreliablePayer::$taxOfficeCode`
   (ADIS `cisloFu`: regional office 451–464 or `013`) are codes of the same list `FinancniUrad`; equal only for
   Specialised Tax Office subjects, never compare them across sources.
-- `Insolvency = Active` can be a closed proceeding; `Bankruptcy` (CEÚ) is useless for insolvency.
+- `Insolvency = Active` can be a closed proceeding; `Bankruptcy` (CEÚ) covers only pre-2008 proceedings; useless for
+  insolvency.
 - 404 / `null` = "not in ARES", usually also for deleted subjects. A subject without IČO has `id === null` and an
   `aresId` like `ARES_########`.
-- A future `dissolvedOn` is a scheduled dissolution, not a dissolved subject; a really dissolved subject is usually
-  404 / `null`. ARES `Vat = Dissolved` can lag behind ADIS; `VatRegistrationEnded` yields to an `Ok` payer.
+- A future `dissolvedOn` is a recorded end of an authorisation (natural persons), not a dissolved subject; a company in
+  liquidation is active with `InLiquidation`; a subject that has really ceased to exist is usually 404 / `null`.
+  ARES `Vat = Dissolved` can lag behind ADIS; `VatRegistrationEnded` yields to an `Ok` payer.
 - `RegistrationStatus::Unknown` = a value added by ARES after this version; an absent key = `Nonexistent`.
 - ADIS and ARES give no VAT registration start/end date or history.
 

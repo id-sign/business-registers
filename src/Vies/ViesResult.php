@@ -19,7 +19,7 @@ final readonly class ViesResult
      * @param ?MatchResult       $postalCodeMatch    comparison of TraderDetails::$postalCode; null when not returned
      * @param ?MatchResult       $cityMatch          comparison of TraderDetails::$city; null when not returned
      * @param ?MatchResult       $companyTypeMatch   comparison of TraderDetails::$companyType; null when not returned
-     * @param ?string            $consultationNumber proof of the check; VIES issues it only when a requester was given
+     * @param ?string            $consultationNumber evidence that the check was made at that time (VIES calls it only one of the elements of evidence; keep it); issued only when a requester was given
      * @param \DateTimeImmutable $checkedAt          time of the check in UTC
      */
     public function __construct(

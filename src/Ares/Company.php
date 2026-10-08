@@ -21,17 +21,18 @@ final readonly class Company
     private const array NATURAL_PERSON_LEGAL_FORMS = ['100', '101', '102', '103', '104', '105', '106', '107', '108', '424', '425'];
 
     /**
-     * @param string       $aresId               company id, or ARES_######## for a subject without one
-     * @param ?CompanyId   $id                   null for a subject without a company id
-     * @param ?string      $legalFormCode        ARES code list value, e.g. "121"
-     * @param ?VatId       $vatId                own VAT id; a filled value does not mean a VAT payer
-     * @param ?VatId       $groupVatId           VAT id of the VAT group the subject is a member of
-     * @param ?string      $taxOfficeCode        ARES financniUrad: workplace (code list FinancniUrad, three digits, e.g. "293" Územní pracoviště Brno-venkov) or "013" Specialised Tax Office; equal to the ADIS code of VatSubject only for Specialised Tax Office subjects, do not compare
-     * @param list<string> $deliveryAddressLines filled lines of the delivery address only
-     * @param list<string> $naceCodes            CZ-NACE 2025
-     * @param list<string> $naceCodes2008        CZ-NACE 2008
-     * @param ?string      $fileNumber           file number in the public register, e.g. "B 1581/MSPH"
-     * @param ?string      $primarySource        e.g. "ros", "vr"
+     * @param string              $aresId               company id, or ARES_######## for a subject without one
+     * @param ?CompanyId          $id                   null for a subject without a company id
+     * @param ?string             $legalFormCode        ARES code list value, e.g. "121"
+     * @param ?VatId              $vatId                own VAT id; a filled value does not mean a VAT payer
+     * @param ?VatId              $groupVatId           VAT id of the VAT group the subject is a member of
+     * @param ?string             $taxOfficeCode        ARES financniUrad: workplace (code list FinancniUrad, three digits, e.g. "293" Územní pracoviště Brno-venkov) or "013" Specialised Tax Office; equal to the ADIS code of VatSubject only for Specialised Tax Office subjects, do not compare
+     * @param list<string>        $deliveryAddressLines filled lines of the delivery address only
+     * @param ?\DateTimeImmutable $dissolvedOn          ARES datumZaniku: end of existence (deletion from the register, NOZ § 185) or of the registration; not the dissolution decision
+     * @param list<string>        $naceCodes            CZ-NACE 2025
+     * @param list<string>        $naceCodes2008        CZ-NACE 2008
+     * @param ?string             $fileNumber           file number in the public register, e.g. "B 1581/MSPH"
+     * @param ?string             $primarySource        e.g. "ros", "vr"
      */
     public function __construct(
         public string $aresId,
@@ -66,9 +67,9 @@ final readonly class Company
 
     /**
      * Whether the subject is dissolved on $on (default: today in Europe/Prague): dissolvedOn is set and not after $on,
-     * both compared as calendar days (each date in its own time zone). ARES carries a future dissolution date
-     * for active subjects (a scheduled dissolution) and usually answers 404 for a subject that has really been
-     * dissolved.
+     * both compared as calendar days (each date in its own time zone). ARES carries a future datumZaniku for
+     * some active subjects (72396067, a natural person whose authorisation is recorded until 2035-12-10) and usually
+     * answers 404 for a subject that has really ceased to exist.
      */
     public function isDissolved(?\DateTimeImmutable $on = null): bool
     {

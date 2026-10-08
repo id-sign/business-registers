@@ -21,12 +21,13 @@ namespace IdSign\BusinessRegisters\Ares;
  *   Company::vatLookupId(), never with Company::$vatId; a VAT id derived from the company id is usually
  *   not found there.
  * - Natural persons have VAT ids in ARES too (nine or ten digits): the birth number (nine digits for births
- *   before 1954) or a nine-digit number assigned by the tax administrator (starts with 6).
+ *   before 1954) or a nine-digit identifier assigned by the tax administrator (starts with 6; daňový řád
+ *   § 130 odst. 4) — the same kind of identifier foreign persons and VAT groups (CZ699…) get.
  *   Never derive a VAT id from the company id; always take it from ARES.
  * - Insolvency stays Active after the proceedings ended (České aerolinie, 45795908, proceedings
  *   closed on 1 July 2022). Only the insolvency register (ISIR) tells whether an insolvency is current.
- * - Bankruptcy (CEÚ) does not reflect insolvency (Sberbank CZ, 25083325, in bankruptcy: Nonexistent).
- *   Do not use it.
+ * - Bankruptcy (CEÚ) holds only proceedings under Act No. 328/1991 Sb., opened before 1 January 2008, so it
+ *   does not reflect insolvency (Sberbank CZ, 25083325, in bankruptcy: Nonexistent). Do not use it.
  */
 final readonly class Registrations
 {

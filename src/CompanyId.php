@@ -10,7 +10,9 @@ use IdSign\BusinessRegisters\Exception\InvalidInput;
  * Czech company identification number (IČO), always eight digits.
  *
  * An id read from a register response may fail the check digit: ARES lists active subjects whose IČO does not
- * satisfy it. Use hasValidCheckDigit() to tell them apart.
+ * satisfy it. Use hasValidCheckDigit() to tell them apart. No act prescribes the check digit (Act No. 111/2009 Sb.
+ * § 24 only defines IČO as a numeric code); it is the register administrator's convention, and the register is the
+ * authority.
  */
 final readonly class CompanyId implements \Stringable
 {
