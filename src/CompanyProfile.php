@@ -10,17 +10,18 @@ use IdSign\BusinessRegisters\Ares\AresRegister;
 use IdSign\BusinessRegisters\Ares\Company;
 use IdSign\BusinessRegisters\Ares\RegistrationStatus;
 use IdSign\BusinessRegisters\Exception\ExceptionInterface;
+use IdSign\BusinessRegisters\Isir\InsolvencyProceedings;
 use IdSign\BusinessRegisters\Vies\ViesResult;
 
 /**
  * Company assembled by CompanyLookup from ARES and the requested sections.
  *
- * A null section property ($vat, $vies) has five meanings; status() tells them apart:
+ * A null section property ($vat, $vies, $insolvencies) has five meanings; status() tells them apart:
  * NotRequested (the section was not asked for), NotFound (the source does not hold the subject),
- * NotApplicable (the subject has no VAT id), Unavailable (the source could not answer; ask again
- * later) and Rejected (the source rejected the request; fix the input or configuration). For the
- * last two error() holds the exception. Never read a null section as a negative answer without
- * checking status().
+ * NotApplicable (the subject has no id the section is queried under: no VAT id for Vat and Vies, no
+ * IČO for Insolvency), Unavailable (the source could not answer; ask again later) and Rejected (the
+ * source rejected the request; fix the input or configuration). For the last two error() holds the
+ * exception. Never read a null section as a negative answer without checking status().
  *
  * flags() are computed from ARES and only from sections whose status is Ok. An absent flag
  * therefore means "clean" only when isComplete() is true and the section the flag comes from
@@ -38,6 +39,7 @@ final readonly class CompanyProfile
         public Company $company,
         public ?VatSubject $vat,
         public ?ViesResult $vies,
+        public ?InsolvencyProceedings $insolvencies,
         public array $statuses,
         public array $errors,
     ) {
@@ -113,6 +115,26 @@ final readonly class CompanyProfile
     }
 
     /**
+     * Whether the insolvency register lists an ongoing proceeding for the subject, a filed petition included
+     * (see InsolvencyProceeding::isOngoing()).
+     *
+     * The answer is tri-state like isVatPayer(): true or false is definitive (false also when the subject has no
+     * IČO); null means the answer is unknown (Section::Insolvency is Unavailable or Rejected) and must never be
+     * read as "not in insolvency".
+     *
+     * @throws \LogicException Section::Insolvency was not requested
+     */
+    public function isInInsolvency(): ?bool
+    {
+        return match ($this->status(Section::Insolvency)) {
+            SectionStatus::Ok => ($this->insolvencies ?? throw new \LogicException('Section Insolvency is Ok but the profile holds no proceedings'))->hasOngoing(),
+            SectionStatus::NotFound, SectionStatus::NotApplicable => false,
+            SectionStatus::Unavailable, SectionStatus::Rejected => null,
+            SectionStatus::NotRequested => throw new \LogicException('Section Insolvency was not requested; pass Section::Insolvency to CompanyLookup::byCompanyId()'),
+        };
+    }
+
+    /**
      * The register subject for an Ok section, false for a definitive "not in the register", null for unknown.
      */
     private function vatAnswer(): VatSubject|false|null
@@ -138,6 +160,7 @@ final readonly class CompanyProfile
             // "Kov likvidaci" do not match.
             RiskFlag::InLiquidation => 1 === preg_match('/(?<![^\s"\'„“”‘’‚‛‟«»‹›´`,.()\/\p{Pd}])v\s+likvidaci(?![^\s"\'„“”‘’‚‛‟«»‹›´`,.()\/\p{Pd}])/iu', $this->company->name),
             RiskFlag::InsolvencyRecord => $registrations->isActive(AresRegister::Insolvency),
+            RiskFlag::Insolvency => SectionStatus::Ok === $this->status(Section::Insolvency) && true === $this->insolvencies?->hasOngoing(),
             RiskFlag::UnreliableVatPayer => null !== $vat && $vat->unreliable && $vat->isVatPayer(),
             RiskFlag::UnreliablePerson => SubjectType::UnreliablePerson === $vat?->type
                 || (null !== $vat && $vat->unreliable && SubjectType::IdentifiedPerson === $vat->type),

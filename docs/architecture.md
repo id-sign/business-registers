@@ -97,17 +97,25 @@ consumers depend on the interface and use it for test doubles.
   under the group VAT id; in rare cases it still answers the member's own VAT id (which ARES may carry as a former one)
   as a VAT payer too, and the facade asks the group only. A DIČ is never derived from an IČO. ADIS, not ARES, decides
   VAT payer status.
+- Each section decides `NotApplicable` on the id it is asked under, and its client is then not asked: `Vat` and `Vies`
+  without `Company::vatLookupId()`, `Insolvency` (ISIR, keyed by IČO) without `Company::$id`. A company without a DIČ
+  therefore still gets an `Insolvency` answer. `Insolvency` is `Ok` also with an empty collection; the lookup never
+  sets `NotFound` for it.
 - `CompanyProfile`: `status()`, `error()`, `isComplete()` (no section `Unavailable` or `Rejected`), `flags()`,
   `hasFlag()`. Flags are computed only from sections in status `Ok` plus the ARES base; an absent flag means "clean"
   only on a complete profile with the section requested.
 - Shortcuts `isVatPayer()` and `hasPublishedAccount()` return `?bool`: `true`/`false` from an `Ok` section, `false` for
   `NotFound` and `NotApplicable`, `null` for `Unavailable` and `Rejected` (unknown, never "not a payer"),
-  `\LogicException` for `NotRequested`. No further `VatSubject` API is delegated onto the profile.
+  `\LogicException` for `NotRequested`. No further `VatSubject` API is delegated onto the profile. `isInInsolvency()`
+  follows the same pattern over `Section::Insolvency`: `InsolvencyProceedings::hasOngoing()` for `Ok`, `false` for
+  `NotFound` and `NotApplicable`, `null` for `Unavailable` and `Rejected`, `\LogicException` for `NotRequested`.
 - `SectionStatus` is string-backed; its values are part of the JSON form of a profile and must stay stable.
 - `RiskFlag::InLiquidation` matches the phrase `v\s+likvidaci` (`/iu`) anywhere in the name, provided the character on
   each side is absent or one of whitespace, a straight or typographic quote (`"'„“”‘’‚‛‟«»‹›`), the ARES quote
   substitutes `´` and `` ` ``, `,`, `.`, `(`, `)`, `/` or a dash (`\p{Pd}`); "vlikvidaci" and "Kov likvidaci" stay
-  unmatched. `RiskFlag::InsolvencyRecord` comes from ARES `Insolvency = Active`, which can be a closed proceeding.
+  unmatched. `RiskFlag::InsolvencyRecord` comes from ARES `Insolvency = Active`, which can be a closed proceeding;
+  `RiskFlag::Insolvency` comes from an `Ok` section `Insolvency` with at least one proceeding
+  `InsolvencyProceeding::isOngoing()` reports as ongoing (a filed petition included). The two are independent.
 - `RiskFlag::Ceased` is `Company::hasCeased()`: `ceasedOn` not after today at midnight Europe/Prague;
   `ceasedOn` is ARES `datumZaniku` (zánik, not zrušení). `hasCeased()` is the only place the library reads the
   clock; the optional `$on` keeps tests deterministic. `UnreliableVatPayer` is `nespolehlivyPlatce` on a payer or
@@ -121,10 +129,12 @@ consumers depend on the interface and use it for test doubles.
   `findMany()`; section `Vat` is one `VatRegister::findMany()` over the distinct Czech `Company::vatLookupId()` values;
   `Vies` is one `check()` per distinct `Company::vatLookupId()`, sequentially, memoised for the call (result or
   exception shared by the companies with that lookup id); after an `InvalidInput` with `errorCode`
-  `INVALID_REQUESTER_INFO` no further `check()` is sent and the remaining lookup ids get that same exception. The
-  facade does not chunk; the clients do.
-- The statuses follow `byCompanyId()` through one shared per-company step: no lookup id → `NotApplicable`; absent from
-  the ADIS answer → `NotFound`. The ADIS call's `ServiceUnavailable` / `InvalidResponse` makes `Vat` `Unavailable`,
-  its `InvalidInput` makes it `Rejected`, for every profile in the call; a non-Czech lookup id is not sent and makes
-  that profile's `Vat` `Rejected`. A VIES failure affects only the companies with that lookup id, except a requester
+  `INVALID_REQUESTER_INFO` no further `check()` is sent and the remaining lookup ids get that same exception.
+  `Insolvency` is one `InsolvencyRegister::find()` per company, sequentially in `Companies` order, not memoised (ARES
+  de-duplicates the companies) and without a short-circuit: a failure affects only that company. The facade does not
+  chunk; the clients do.
+- The statuses follow `byCompanyId()` through one shared per-company step: no id for the section → `NotApplicable`;
+  absent from the ADIS answer → `NotFound`. The ADIS call's `ServiceUnavailable` / `InvalidResponse` makes `Vat`
+  `Unavailable`, its `InvalidInput` makes it `Rejected`, for every profile in the call; a non-Czech lookup id is not
+  sent and makes that profile's `Vat` `Rejected`. A VIES failure affects only the companies with that lookup id, except a requester
   rejection, which stops VIES for the rest of the call. Only ARES exceptions propagate.

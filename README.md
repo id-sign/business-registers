@@ -81,6 +81,8 @@ IdSign\BusinessRegisters\Adis\VatRegisterClient: ~
 IdSign\BusinessRegisters\Adis\VatRegister: '@IdSign\BusinessRegisters\Adis\VatRegisterClient'
 IdSign\BusinessRegisters\Vies\ViesClient: ~
 IdSign\BusinessRegisters\Vies\Vies: '@IdSign\BusinessRegisters\Vies\ViesClient'
+IdSign\BusinessRegisters\Isir\InsolvencyClient: ~
+IdSign\BusinessRegisters\Isir\InsolvencyRegister: '@IdSign\BusinessRegisters\Isir\InsolvencyClient'
 IdSign\BusinessRegisters\CompanyLookup: ~
 ```
 
@@ -90,6 +92,7 @@ IdSign\BusinessRegisters\CompanyLookup: ~
 use IdSign\BusinessRegisters\Adis\VatRegisterClient;
 use IdSign\BusinessRegisters\Ares\AresClient;
 use IdSign\BusinessRegisters\CompanyLookup;
+use IdSign\BusinessRegisters\Isir\InsolvencyClient;
 use IdSign\BusinessRegisters\Vies\ViesClient;
 use Symfony\Component\HttpClient\HttpClient;
 
@@ -98,7 +101,8 @@ $http = HttpClient::create();
 $ares = new AresClient($http);
 $vatRegister = new VatRegisterClient($http);
 $vies = new ViesClient($http);
-$lookup = new CompanyLookup($ares, $vatRegister, $vies);
+$isir = new InsolvencyClient($http);
+$lookup = new CompanyLookup($ares, $vatRegister, $vies, $isir);
 ```
 
 Each client takes `$endpoint` (default: the production service) and `$timeout` in seconds (default `10.0`) as optional
@@ -126,7 +130,7 @@ use IdSign\BusinessRegisters\RiskFlag;
 use IdSign\BusinessRegisters\Section;
 use IdSign\BusinessRegisters\SectionStatus;
 
-$profile = $lookup->byCompanyId('452 746 49', Section::Vat, Section::Vies);
+$profile = $lookup->byCompanyId('452 746 49', Section::Vat, Section::Vies, Section::Insolvency);
 
 if (null === $profile) {
     // ARES does not hold the subject (usually also true for deleted subjects)
@@ -138,6 +142,7 @@ $profile->isComplete();                          // false if any requested secti
 $profile->status(Section::Vat);                  // SectionStatus::Ok
 $profile->vat?->type;                            // SubjectType::VatPayer
 $profile->vies?->valid;                          // true
+$profile->insolvencies?->hasOngoing();           // false
 
 $profile->flags();                               // list<RiskFlag>, e.g. [RiskFlag::UnreliableVatPayer]
 $profile->hasFlag(RiskFlag::Ceased);             // false
@@ -147,22 +152,28 @@ if (SectionStatus::Unavailable === $profile->status(Section::Vies)) {
 }
 ```
 
+The sections are `Section::Vat` (VAT register, `$profile->vat`), `Section::Vies` (`$profile->vies`) and
+`Section::Insolvency` (insolvency register ISIR, `$profile->insolvencies`). Vat and Vies are looked up under the
+company's DIČ (`Company::vatLookupId()`), Insolvency under its IČO, so a company without a DIČ still gets an
+Insolvency answer. Insolvency is `Ok` also when ISIR lists nothing (an empty collection); it is never `NotFound`.
+
 The IČO may be given as a string in any spacing or a `CompanyId`. A section whose source is down does not fail the
 lookup: its status becomes `Unavailable` and the other sections are still filled. A section whose source rejects the
-request (an `InvalidInput` from ADIS or VIES, e.g. VIES `INVALID_REQUESTER_INFO` for a wrong requester) becomes
+request (an `InvalidInput` from ADIS, VIES or ISIR, e.g. VIES `INVALID_REQUESTER_INFO` for a wrong requester) becomes
 `Rejected` the same way, with the exception and its `errorCode` in `error()`; the answer is **unknown** and asking again
 will not help until the input or configuration is fixed. Only ARES errors are thrown, because without ARES there is no
 profile.
 
 #### Five meanings of `null`
 
-`$profile->vat` and `$profile->vies` are `null` in five different situations; `status()` tells them apart:
+`$profile->vat`, `$profile->vies` and `$profile->insolvencies` are `null` in five different situations; `status()`
+tells them apart:
 
 | `status($section)` | Meaning                                                                                                      |
 |--------------------|--------------------------------------------------------------------------------------------------------------|
 | `NotRequested`     | the section was not passed to `byCompanyId()` / `byCompanyIds()`                                             |
 | `NotFound`         | the source answered that it does not hold the subject                                                        |
-| `NotApplicable`    | the subject has no VAT id, so there is nothing to ask for                                                    |
+| `NotApplicable`    | the subject has no id the section is asked under (no DIČ for Vat and Vies, no IČO for Insolvency)            |
 | `Unavailable`      | the source could not answer — the answer is **unknown**; `error()` holds the exception                       |
 | `Rejected`         | the source rejected the request — **unknown**; fix the input or configuration; `error()` holds the exception |
 
@@ -182,13 +193,14 @@ requested**.
 | `Ceased`                 | ARES `datumZaniku` — the day the subject ceased to exist (zánik, NOZ § 185: deletion from the register) or its registration ended — is today or in the past (midnight Europe/Prague). Not the dissolution (zrušení): a company in liquidation is still active, see `InLiquidation`. A future date raises nothing (it stays in `$company->ceasedOn`) | —               |
 | `InLiquidation`          | the name contains the standalone phrase "v likvidaci" anywhere: at the end, before the legal form (`… v likvidaci, s.r.o.`), between dashes, slashes or parentheses; case-insensitive. Mandatory suffix for a legal person in liquidation (NOZ § 187 odst. 2); never raised for natural persons, foreign persons and branches, or a dissolution without liquidation | —               |
 | `InsolvencyRecord`       | ARES lists the subject in the insolvency register — a record, possibly a closed one                                                                                                                                                  | —               |
+| `Insolvency`             | ISIR lists at least one ongoing proceeding (`InsolvencyProceeding::isOngoing()`), a filed petition included; a closed proceeding raises only `InsolvencyRecord`                                                                     | `Section::Insolvency` |
 | `UnreliableVatPayer`     | the VAT register marks a VAT payer or VAT group as unreliable (nespolehlivyPlatce); implies `isVatPayer() === true`                                                                                                                  | `Section::Vat`  |
 | `UnreliablePerson`       | the subject is an unreliable person under §106aa of the VAT Act: the register keeps it as an unreliable person, or marks a non-payer identified person as unreliable                                                                 | `Section::Vat`  |
 | `VatRegistrationEnded`   | ARES VAT registration is `Ended` or `Historical`, the subject is not in an active VAT group, and the VAT register (when `Section::Vat` is `Ok`) does not say the subject is a VAT payer                                          | —               |
 | `NoPublishedBankAccount` | a VAT payer or VAT group without any active published bank account                                                                                                                                                                   | `Section::Vat`  |
 | `ViesInvalid`            | VIES answered that the VAT id is not valid                                                                                                                                                                                           | `Section::Vies` |
 
-#### Shortcuts: `isVatPayer()` and `hasPublishedAccount()`
+#### Shortcuts: `isVatPayer()`, `hasPublishedAccount()` and `isInInsolvency()`
 
 ```php
 $profile->isVatPayer();                          // ?bool
@@ -205,6 +217,20 @@ Both are tri-state and read `Section::Vat`:
 | `Rejected`                  | `null` — **unknown**, fix the input or configuration; asking again will not help                 |
 | `NotRequested`              | throws `\LogicException` — you forgot to pass `Section::Vat`                                     |
 
+`isInInsolvency()` answers "is the subject in insolvency now?" from `Section::Insolvency` the same tri-state way:
+
+```php
+$profile->isInInsolvency();                      // ?bool
+```
+
+| `status(Section::Insolvency)` | Result                                                                                     |
+|-------------------------------|--------------------------------------------------------------------------------------------|
+| `Ok`                          | `true` when ISIR lists an ongoing proceeding (a filed petition included), else `false`     |
+| `NotApplicable`               | `false` — definitive; the subject has no IČO                                               |
+| `Unavailable`                 | `null` — **unknown**, ask again later; never read it as "not in insolvency"                |
+| `Rejected`                    | `null` — **unknown**, fix the input or configuration                                      |
+| `NotRequested`                | throws `\LogicException` — you forgot to pass `Section::Insolvency`                        |
+
 Requesting a section whose client was not passed to the `CompanyLookup` constructor also throws `\LogicException`,
 before any request is made.
 
@@ -220,12 +246,13 @@ from the IČO.
 
 #### VIES requester
 
-Pass your own VAT id as the fourth constructor argument to get a consultation number in `$profile->vies`:
+Pass your own VAT id as the fifth constructor argument `viesRequester` to get a consultation number in
+`$profile->vies`:
 
 ```php
 use IdSign\BusinessRegisters\VatId;
 
-$lookup = new CompanyLookup($ares, $vatRegister, $vies, viesRequester: VatId::parse('CZ12345678'));
+$lookup = new CompanyLookup($ares, $vatRegister, $vies, $isir, viesRequester: VatId::parse('CZ12345678'));
 ```
 
 #### Many companies at once
@@ -234,7 +261,10 @@ $lookup = new CompanyLookup($ares, $vatRegister, $vies, viesRequester: VatId::pa
 with one `findMany()`, section `Vat` with one ADIS `findMany()` over the companies' `vatLookupId()` values (a VAT group
 is asked once for all its members). 100 IČO with `Section::Vat` are 1 ARES and 1 ADIS request (both clients send
 batches of 100). VIES has no bulk call: `Section::Vies` makes one `check()` per distinct lookup DIČ (a VAT group is
-checked once for all its members), one after another, so 100 companies with `Vies` take minutes.
+checked once for all its members), one after another, so 100 companies with `Vies` take minutes. ISIR has no bulk
+call either: `Section::Insolvency` makes one `find()` per company, one after another in ARES response order —
+typically 0.10–0.25 s each (100 companies ≈ 10–25 s), at worst the ISIR client's `$timeout` per company when ISIR is
+down.
 
 ```php
 use IdSign\BusinessRegisters\CompanyId;
@@ -257,13 +287,14 @@ gets `Rejected`. A VIES outage or rejection affects only the companies with that
 stored exception. Once VIES rejects the requester (`INVALID_REQUESTER_INFO`), no further VIES request is sent in that
 call: every company whose lookup DIČ was not yet checked gets `Rejected` with that same exception instance, whose
 message names the DIČ of the request that was rejected; a company whose lookup DIČ was already checked keeps that
-answer. The next call asks VIES again. Every IČO and the section clients are checked before
+answer. The next call asks VIES again. An ISIR outage, invalid response or rejection affects only that company; the
+following companies are still asked. Every IČO and the section clients are checked before
 the first request; ARES errors are thrown.
 
 #### Change tracking
 
-To detect changes between runs, store snapshots of the DTOs (`$profile->company`, `$profile->vat`, `$profile->vies`),
-not of the whole profile. `serialize($profile)` can fail when a stored exception carries a stack trace with
+To detect changes between runs, store snapshots of the DTOs (`$profile->company`, `$profile->vat`, `$profile->vies`,
+`$profile->insolvencies`), not of the whole profile. `serialize($profile)` can fail when a stored exception carries a stack trace with
 non-serialisable arguments (`zend.exception_ignore_args=0`, the `php.ini-development` default).
 
 ### Storing identifiers
@@ -649,6 +680,7 @@ $profile = new CompanyProfile(
     company: $company,
     vat: null,
     vies: null,
+    insolvencies: null,
     statuses: [Section::Vat->name => SectionStatus::Unavailable],
     errors: [],
 );

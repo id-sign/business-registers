@@ -20,7 +20,10 @@ enum SectionStatus: string
     /** The source answered that it does not hold the subject. */
     case NotFound = 'not_found';
 
-    /** The section does not apply to the subject, e.g. a VAT section for a subject without a VAT id. */
+    /**
+     * The section does not apply to the subject, e.g. a VAT section for a subject without a VAT id, or the Insolvency
+     * section for a subject without an IČO.
+     */
     case NotApplicable = 'not_applicable';
 
     /** The source could not answer; CompanyProfile::error() holds the exception. The answer is unknown. */

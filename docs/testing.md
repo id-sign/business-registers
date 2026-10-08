@@ -16,7 +16,7 @@
   the generator) is the number of requests issued and not yet read, `maxOpen` its peak and `issued` the requests
   attempted. A request whose answer closure throws counts as issued but never open. Cancellation is asserted in
   `HttpTransportTest`, where the test's sender closures keep the responses they issued (`getInfo('canceled')`).
-- Facade tests use stubs of `CompanyDirectory`, `VatRegister` and `Vies`; no HTTP.
+- Facade tests use stubs of `CompanyDirectory`, `VatRegister`, `Vies` and `InsolvencyRegister`; no HTTP.
 - PHPStan analyses the tests too. Avoid assertions it can prove statically (`assertInstanceOf` on `new X()`, a
   constant against its own literal, enum values with literal arguments): pin contracts through observable behaviour,
   data providers or `ReflectionClass` / `ReflectionEnum`. Narrow `mixed` before `assertContains` or array access. To

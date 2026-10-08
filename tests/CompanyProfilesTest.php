@@ -19,7 +19,7 @@ final class CompanyProfilesTest extends TestCase
 {
     private static function profile(Company $company): CompanyProfile
     {
-        return new CompanyProfile($company, null, null, [], []);
+        return new CompanyProfile($company, null, null, null, [], []);
     }
 
     private static function bank(): CompanyProfiles
