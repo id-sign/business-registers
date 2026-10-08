@@ -8,8 +8,8 @@ use IdSign\BusinessRegisters\Address;
 use IdSign\BusinessRegisters\CompanyId;
 
 /**
- * One debtor of one insolvency proceeding as the register lists it (one `data` element); spouses in one proceeding
- * are two rows with the same reference.
+ * One debtor row of one insolvency proceeding as the register lists it (one `data` element). Rows sharing a reference
+ * can be co-debtors (with the co-debtor's personal data) or the same debtor listed twice (two addresses).
  *
  * Carries personal data of natural persons (birth number, birth date, name, residence; § 420 of Act 182/2006 Sb.).
  */
@@ -28,12 +28,15 @@ final readonly class InsolvencyProceeding
      * @param ?string             $court                   ISIR nazevOrganizace
      * @param ?\DateTimeImmutable $bornOn                  ISIR datumNarozeni
      * @param ?string             $name                    ISIR nazevOsoby: surname of a natural person or name of a legal person
-     * @param ?string             $addressKind             ISIR druhAdresy, observed "SÍDLO FY", "TRVALÁ"
+     * @param ?string             $addressKind             ISIR druhAdresy, observed "SÍDLO FY", "SÍDLO ORG.", "TRVALÁ"
      * @param ?string             $stateCode               ISIR druhStavKonkursu, observed NEVYRIZENA, ÚPADEK, KONKURS, REORGANIZ,
-     *                                                     ODDLUŽENÍ, PRAVOMOCNA, ODSKRTNUTA; any other value may appear
+     *                                                     ODDLUŽENÍ, PRAVOMOCNA, ODSKRTNUTA, VYRIZENA; any other value may appear
      * @param ?string             $detailUrl               ISIR urlDetailRizeni, the public detail page of the proceeding
-     * @param bool                $otherDebtorInProceeding ISIR dalsiDluznikVRizeni: another debtor in the same proceeding
-     * @param ?\DateTimeImmutable $insolvencyDeclaredOn    ISIR datumPmZahajeniUpadku: decision on insolvency took legal force
+     * @param bool                $otherDebtorInProceeding ISIR dalsiDluznikVRizeni as received; its meaning is undocumented and
+     *                                                     varies by query, so it is no reliable "has co-debtors" answer
+     * @param ?\DateTimeImmutable $insolvencyDeclaredOn    ISIR datumPmZahajeniUpadku: decision on insolvency took legal force;
+     *                                                     can be null although insolvency was declared (older proceedings),
+     *                                                     so stateCode decides
      * @param ?\DateTimeImmutable $endedOn                 ISIR datumPmUkonceniUpadku: end of the proceeding took legal force;
      *                                                     may be set without insolvencyDeclaredOn
      */

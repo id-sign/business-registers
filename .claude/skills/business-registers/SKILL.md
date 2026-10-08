@@ -37,8 +37,8 @@ lower `maxConcurrency`. In Symfony register the clients and bind each interface 
   sequential, a requester rejection stops VIES for the rest of the call: 100 companies with `Vies` take minutes; ISIR
   one `find()` per company, sequential, 0.10–0.25 s each, worst case `$timeout` each when ISIR is down). Use it for
   "everything about these companies" with tolerance to an outage.
-- Single client: bulk checks (`findMany`), search, the list of unreliable payers, a bank account check without ARES,
-  VIES for a foreign VAT id.
+- Single client: bulk checks (`findMany`), search, the list of unreliable payers, a bank account check without ARES, VIES
+  for a foreign VAT id.
 
 ## API (namespace `IdSign\BusinessRegisters`)
 
@@ -114,10 +114,11 @@ check(VatId|string $vatId, VatId|string|null $requester = null, ?Vies\TraderDeta
 find(CompanyId|string $id): Isir\InsolvencyProceedings   // empty = not on the list NOW (§ 425 removes after 5 years)
 // InsolvencyProceedings (readonly, IteratorAggregate, Countable): proceedings (list), synchronisedAt (?DateTimeImmutable,
 // Prague local time, freshness hint only; absent on an empty result), ongoing(): list<…>, hasOngoing(): bool
-// InsolvencyProceeding (readonly, one row per debtor; spouses = two rows): companyId?, birthNumber? (string as
-// received), senate, caseType, caseNumber, year, court?, bornOn?, titleBefore?, titleAfter?, firstName?, name?,
-// addressKind?, address? (Address), stateCode? (raw string: NEVYRIZENA, ÚPADEK, KONKURS, REORGANIZ, ODDLUŽENÍ,
-// PRAVOMOCNA, ODSKRTNUTA, …), detailUrl?, otherDebtorInProceeding, insolvencyDeclaredOn?, endedOn?
+// InsolvencyProceeding (readonly, one debtor row; one reference() may span co-debtors or one debtor twice): companyId?,
+// birthNumber?, senate, caseType, caseNumber, year, court?, bornOn?, titleBefore?, titleAfter?, firstName?, name?,
+// addressKind? (SÍDLO FY, SÍDLO ORG., TRVALÁ), address?, stateCode? (raw: NEVYRIZENA, ÚPADEK, KONKURS, REORGANIZ,
+// ODDLUŽENÍ, PRAVOMOCNA, ODSKRTNUTA, VYRIZENA, …), detailUrl?, endedOn?, insolvencyDeclaredOn? (null although declared
+// is possible: use stateCode), otherDebtorInProceeding (raw dalsiDluznikVRizeni, varies by query: not "has co-debtors")
 $p->reference(): string                   // "95 INS 12575/2022"
 $p->isOngoing(): bool                     // endedOn null AND stateCode not ODSKRTNUTA/PRAVOMOCNA/VYRIZENA/MYLNÝ ZÁP.;
                                           // missing/unknown state = ongoing; KONKURS/ÚPADEK can be ended
@@ -174,8 +175,7 @@ Address: text, street, streetName, houseNumber, houseNumberType, orientationNumb
 `isInInsolvency()` maps `status(Insolvency)` the same way (`Ok` -> `hasOngoing()`; `null` = unknown, never "not in insolvency").
 
 **ARES is a pointer, not an answer.**
-- A filled `vatId` does not make a VAT payer; ADIS decides (`SubjectType::VatPayer` / `VatGroup`). ARES `Vat = Active`
-  also covers identified persons.
+- A filled `vatId` is no proof of a payer; ADIS decides (`isVatPayer()`). ARES `Vat = Active` includes identified persons.
 - A VAT group member has a `groupVatId`; its `vatId` is `null` or its former own DIČ (ARES `Vat = Ended` or
   `Nonexistent`). Ask ADIS/VIES with `vatLookupId()` (`groupVatId ?? vatId`), never with `vatId`; ADIS answers for the
   group, rarely still for the member's own DIČ too, and the facade asks the group only.
@@ -256,11 +256,12 @@ first failure in sending order is thrown, the rest of its wave is cancelled, no 
 results (`limit` 1-1 000, a non-blank criterion required); ADIS down nightly 0:00-0:10; VIES and member states throttle
 (`ServiceUnavailable`, retry later); ISIR has no bulk query; timeout 10 s default (more for `unreliablePayers()`).
 
-Operator terms (not enforced by the library; a breach can get the IP blocked; all workers behind one IP count
-together): ARES max 500 requests/min and no "larger number" of simultaneous requests (no figure published); ADIS max
-4 parallel requests, 2 000/hour, 10 000/24 h (one request = up to 100 DIČ), maintenance Sunday 3:00-4:00; VIES
-global and per-member-state concurrency caps shared by all users (thresholds not published); ISIR none published.
-The library does not count requests per minute/hour/day. Never fan out unbounded.
+Operator terms (not enforced by the library; a breach can get the IP blocked; all workers behind one IP count together):
+ARES max 500 requests/min and no "larger number" of simultaneous requests (no figure published); ADIS max 4 parallel
+requests, 2 000/hour, 10 000/24 h (one request = up to 100 DIČ), maintenance Sunday 3:00-4:00; VIES global and
+per-member-state concurrency caps shared by all users (thresholds not published); ISIR none published, but the ministry
+runs the successor eISIR in verification operation and has announced a change of the web services without a date (the
+client sits behind `InsolvencyRegister`). The library counts no requests; never fan out unbounded.
 
 ## What the library does not do
 

@@ -418,6 +418,10 @@ final class XmlReaderTest extends TestCase
             <huge>99999999999999999999</huge>
             <day>2026-10-08Z</day>
             <badDay>2022-13-45Z</badDay>
+            <offsetDay>2022-09-13+02:00</offsetDay>
+            <negativeOffsetDay>2022-09-13-05:00</negativeOffsetDay>
+            <doubleZoneDay>2022-09-13ZZ</doubleZoneDay>
+            <bareZone>Z</bareZone>
             <moment>2026-10-08T09:26:35.000Z</moment>
             <winterMoment>2026-01-15T09:26:35.000Z</winterMoment>
             <badMoment>yesterday</badMoment>
@@ -474,6 +478,8 @@ final class XmlReaderTest extends TestCase
     {
         self::assertSame('2026-10-08T00:00:00+02:00', self::isirValues()->date('day')->format('c'));
         self::assertSame('2026-10-08T00:00:00+02:00', self::isirValues()->optionalDate('day')?->format('c'));
+        self::assertSame('2022-09-13T00:00:00+02:00', self::isirValues()->date('offsetDay')->format('c'));
+        self::assertSame('2022-09-13T00:00:00+02:00', self::isirValues()->optionalDate('negativeOffsetDay')?->format('c'));
     }
 
     public function testOptionalDateIsNullForAnAbsentOrBlankElement(): void
@@ -496,6 +502,8 @@ final class XmlReaderTest extends TestCase
 
         self::assertSame($expected, self::failure(static fn () => $data->date('badDay'))->getMessage());
         self::assertSame($expected, self::failure(static fn () => $data->optionalDate('badDay'))->getMessage());
+        self::assertSame('ISIR: expected date (Y-m-d) at data[1]/doubleZoneDay', self::failure(static fn () => $data->date('doubleZoneDay'))->getMessage());
+        self::assertSame('ISIR: expected date (Y-m-d) at data[1]/bareZone', self::failure(static fn () => $data->date('bareZone'))->getMessage());
     }
 
     public function testOptionalDateTimePragueReadsTheClockValueAsPragueLocalTime(): void

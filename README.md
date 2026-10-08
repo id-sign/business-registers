@@ -510,12 +510,18 @@ foreach ($proceedings as $proceeding) {          // also $proceedings->proceedin
   `PRAVOMOCNA`, `VYRIZENA`, `MYLNÝ ZÁP.`; a missing or unknown state counts as ongoing (a false alarm is safer than a
   missed insolvency). A filed petition (`NEVYRIZENA`) is ongoing.
 - `stateCode` is the register's raw value, never an enum. Observed: `NEVYRIZENA`, `ÚPADEK`, `KONKURS`, `REORGANIZ`,
-  `ODDLUŽENÍ`, `PRAVOMOCNA`, `ODSKRTNUTA`. `KONKURS` or `ÚPADEK` does not mean the proceeding is still running
-  (České aerolinie `45795908`: `ÚPADEK` with an end date).
+  `ODDLUŽENÍ`, `PRAVOMOCNA`, `ODSKRTNUTA`, `VYRIZENA`. `KONKURS` or `ÚPADEK` does not mean the proceeding is still
+  running (České aerolinie `45795908`: `ÚPADEK` with an end date).
 - An empty collection means "not on the list of debtors now", not "never insolvent": the court removes a debtor
   5 years after the end of the proceeding took legal force, sooner in some cases (Act No. 182/2006 Sb. § 425).
-- One row per debtor: spouses in one proceeding are two proceedings with the same `reference()`
-  (`otherDebtorInProceeding` is `true`). A natural person is found by IČO only if the court recorded it.
+- A row is one debtor of a proceeding. Rows sharing a `reference()` can be co-debtors (with the co-debtor's personal
+  data) or the same debtor listed twice (two addresses), so `count()` can count a proceeding twice.
+  `otherDebtorInProceeding` is the register's raw `dalsiDluznikVRizeni`; its meaning is undocumented and observed to
+  vary by query, so do not read it as "has co-debtors". A natural person is found by IČO only if the court recorded it.
+- `insolvencyDeclaredOn` can be `null` although insolvency was declared (older proceedings); `stateCode` decides.
+  `addressKind` is the raw `druhAdresy`, observed `SÍDLO FY`, `SÍDLO ORG.`, `TRVALÁ`.
+- The ministry runs the successor eISIR in verification operation and has announced a change of the web services
+  without a date. The client sits behind `InsolvencyRegister`.
 - Every row carries what the register publishes (§ 420), including the birth number (`birthNumber`, as received),
   birth date, name and address of natural persons. Your application is the controller of that personal data.
 - `synchronisedAt` is the register's own freshness hint, read as Prague local time (verified in summer time only); the
@@ -641,7 +647,7 @@ address restricted or blocked, so throttle in your application (all workers behi
 | ARES   | at most 500 requests per minute; no "larger number of simultaneous requests" from automated clients (no figure is published); no repeated identical or mostly invalid requests, no probing with random data                                   | [ares.gov.cz › Info pro vývojáře](https://ares.gov.cz/stranky/vyvojar-info), [mf.gov.cz › ARES](https://mf.gov.cz/cs/ministerstvo/informacni-systemy/ares)        |
 | ADIS   | at most 4 requests in parallel, 2 000 requests per hour and 10 000 requests per 24 hours (one request = one call with up to 100 DIČ); no repeated identical requests. Scheduled maintenance every Sunday 3:00–4:00                            | [MOJE daně › Dokumentace › webová služba](https://adisspr.mfcr.cz/pmd/dokumentace/webove-sluzby-spolehlivost-platcu)                                              |
 | VIES   | a global and a per-member-state cap on concurrent requests, counted across all users; the thresholds are not published. A request above the cap is rejected (`*_MAX_CONCURRENT_REQ*`); abusive use gets the IP address blocked (`IP_BLOCKED`) | [VIES › FAQ (Q15)](https://ec.europa.eu/taxation_customs/vies/#/faq), [Technical information](https://ec.europa.eu/taxation_customs/vies/#/technical-information) |
-| ISIR   | no limits or terms published; the service is undocumented apart from its XSD and listens on port 8443                                                                                                                                         | —                                                                                                                                                                 |
+| ISIR   | no limits or terms published; the service is undocumented apart from its XSD, listens on port 8443 and is due to change (eISIR)                                                                                                               | —                                                                                                                                                                 |
 
 - The library does no caching, retrying, rate limiting, scheduling or persistence. Add what you need around it (cache
   profiles, retry `ServiceUnavailable` with back-off, queue lookups).

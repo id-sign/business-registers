@@ -25,7 +25,8 @@
 
 ## Dates
 
-- `Dates::date()` strips one trailing `Z` (the insolvency register sends `2022-09-13Z`), parses `!Y-m-d` in
+- `Dates::date()` strips one trailing `Z` (the insolvency register sends `2022-09-13Z`; `XmlReader::date` on child
+  text first drops one `±hh:mm` offset, which `xsd:date` allows), parses `!Y-m-d` in
   `Europe/Prague` and rejects overflow (`2022-13-45`) by a round trip.
 - `Dates::dateTimeUtc()` accepts ISO 8601 date-times only (`Z`, `±hh:mm`, `±hhmm`, fractions, space-separated form
   read as UTC) and rejects overflow and relative words.

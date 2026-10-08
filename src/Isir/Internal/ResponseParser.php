@@ -21,7 +21,10 @@ use IdSign\BusinessRegisters\Source;
  */
 final class ResponseParser
 {
-    /** A complete answer; the client asks for one more row so a longer list is detected, not silently cut. */
+    /**
+     * Rows of a complete answer. The service caps distinct proceedings at maxPocetVysledku (this plus one) and returns
+     * every debtor row of each, so a list cut at 101 proceedings always has more than 100 rows and is detected.
+     */
     public const int MAX_PROCEEDINGS = 100;
 
     private const array NAMESPACES = [

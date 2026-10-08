@@ -60,10 +60,11 @@ consumers depend on the interface and use it for test doubles.
   would need the source and the prefix map passed in and save a few lines.
 - ISIR has no bulk query and no published limits: `InsolvencyClient::find()` sends one request with
   `filtrAktualniRizeni=F` (the service's "current only" filter hides only some ended states, so the library asks for
-  everything and decides "ongoing" itself in `InsolvencyProceeding::isOngoing()`) and `maxPocetVysledku=101`; a 101st
-  row means the list is incomplete and is `InvalidResponse`, because the service caps `pocetVysledku` as well and the
-  response order is undocumented. The request children are unqualified and their order is fixed by the XSD; another
-  order is a SOAP Fault.
+  everything and decides "ongoing" itself in `InsolvencyProceeding::isOngoing()`) and `maxPocetVysledku=101`. The
+  service caps distinct proceedings at that number and returns every debtor row of each, so a list cut at 101
+  proceedings always has more than 100 rows: more than 100 rows is `InvalidResponse`. (A complete answer of up to 100
+  proceedings with more than 100 rows is rejected too.) The response order is undocumented. The request children are
+  unqualified and their order is fixed by the XSD; another order is a SOAP Fault.
 
 ## Bulk calls and collections
 

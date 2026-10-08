@@ -48,8 +48,9 @@ All implement `Exception\ExceptionInterface`.
   when the body is a SOAP Fault (read leniently), else `null`; SOAP Fault with HTTP 200 → `ServiceUnavailable`, code =
   `faultcode`. `stav` is mandatory. No `kodChyby` → the `data` rows, `pocetVysledku` mandatory; a count above the
   number of rows is a truncated answer → `InvalidResponse` at `…/stav/pocetVysledku` (a lower count is accepted).
-  The service caps `pocetVysledku` at `maxPocetVysledku` too, so the client asks for 101 rows: more than 100 `data`
-  rows is an incomplete list → `InvalidResponse` at `…/data`; exactly 100 is a complete answer.
+  The service caps distinct proceedings at `maxPocetVysledku` and returns every debtor row of each, so the client asks
+  for 101: a list cut at 101 proceedings always has more than 100 `data` rows. More than 100 rows is an incomplete
+  list → `InvalidResponse` at `…/data`; exactly 100 rows is a complete answer.
   `WS2` → empty collection. `WS4`, `SQL1`, `SERVER1` → `ServiceUnavailable` with the code and a fixed description
   (`ISIR data are not current`, `ISIR database error`, `ISIR application error`). `WS1`, `WS3` and any other code →
   `InvalidResponse` at `…/stav/kodChyby` (impossible for a valid id). `cisloSenatu`, `druhVec`, `bcVec`, `rocnik` are

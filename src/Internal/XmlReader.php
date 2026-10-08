@@ -200,6 +200,9 @@ final readonly class XmlReader
             return null;
         }
 
+        // xsd:date allows one zone offset; like the "Z" suffix it is ignored
+        $value = preg_replace('/^(\d{4}-\d{2}-\d{2})[+-]\d{2}:\d{2}$/D', '$1', $value) ?? $value;
+
         return Dates::date($value) ?? throw $this->invalid($name, 'date (Y-m-d)');
     }
 
