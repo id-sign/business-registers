@@ -145,7 +145,7 @@ if (null === $profile) {
 }
 
 echo $profile->company->name;                    // "ČEZ, a. s."
-$profile->isComplete();                          // false if any requested section is Unavailable or Rejected
+$profile->isComplete();                          // false if a requested section is Unavailable or Rejected, or Insolvency is NotApplicable
 $profile->status(Section::Vat);                  // SectionStatus::Ok
 $profile->vat?->type;                            // SubjectType::VatPayer
 $profile->vies?->valid;                          // true
@@ -224,7 +224,8 @@ Both are tri-state and read `Section::Vat`:
 | `Rejected`                  | `null` — **unknown**, fix the input or configuration; asking again will not help                 |
 | `NotRequested`              | throws `\LogicException` — you forgot to pass `Section::Vat`                                     |
 
-`isInInsolvency()` answers "is the subject in insolvency now?" from `Section::Insolvency` the same tri-state way:
+`isInInsolvency()` answers "is the subject in insolvency now?" from `Section::Insolvency`, tri-state as well, except
+that `NotApplicable` is unknown:
 
 ```php
 $profile->isInInsolvency();                      // ?bool
@@ -233,7 +234,7 @@ $profile->isInInsolvency();                      // ?bool
 | `status(Section::Insolvency)` | Result                                                                                     |
 |-------------------------------|--------------------------------------------------------------------------------------------|
 | `Ok`                          | `true` when ISIR lists an ongoing proceeding (a filed petition included), else `false`     |
-| `NotApplicable`               | `false` — definitive; the subject has no IČO                                               |
+| `NotApplicable`               | `null` — **unknown**; the subject has no IČO, and ISIR can list a person under the birth number alone; `isComplete()` is `false` |
 | `Unavailable`                 | `null` — **unknown**, ask again later; never read it as "not in insolvency"                |
 | `Rejected`                    | `null` — **unknown**, fix the input or configuration                                      |
 | `NotRequested`                | throws `\LogicException` — you forgot to pass `Section::Insolvency`                        |
@@ -335,6 +336,16 @@ from `$company->id` or from any other response — is re-hydrated with `CompanyI
 back. ARES holds active subjects whose IČO fails the check digit (`00123562`, `29340042`), and you cannot tell in
 advance which stored string is one of them: a single such string makes the whole `findMany()` / `byCompanyIds()`
 call throw `InvalidInput` before any request, and `missing()` / `get()` of the result throw for it too.
+
+### Addresses
+
+ARES seats, ADIS addresses and ISIR debtor addresses share `Address` with one meaning per field: `street` is the street
+name (or the part of the municipality where there is none) with the numbers, "Duhová 1444/2"; `streetName`,
+`houseNumber` and `orientationNumber` are its parts; `postalCode` is five digits without a space. ADIS and ISIR fill
+the parts only when their value splits unambiguously, otherwise the source value stays in `street`. Names stay as the
+source writes them: ADIS uses upper case, ADIS and ISIR can put a city district into `city` ("PRAHA 4", "Praha 5"),
+where ARES has `city` "Praha" and `cityDistrict`, and ISIR `ulice` (`streetName`) is the village name where there are
+no streets ("Libotenice"), where ARES has `district`. VIES returns free text (`ViesResult::$address`).
 
 ### ARES
 
@@ -525,11 +536,11 @@ foreach ($proceedings as $proceeding) {          // also $proceedings->proceedin
 - Every row carries what the register publishes (§ 420), including the birth number (`birthNumber`, as received),
   birth date, name and address of natural persons. Your application is the controller of that personal data.
 - `synchronisedAt` is the register's own freshness hint, read as Prague local time (verified in summer time only); the
-  register omits it for an empty result. It is never part of a verdict.
+  register omits it for an empty result, and an unreadable value is `null`. It is never part of a verdict.
 - The service listens on port 8443 (`https://isir.justice.cz:8443/...`); allow it in your egress firewall. One `find()`
   is one request, 0.1–0.25 s observed.
-- `find()` returns at most 100 proceedings. A subject with more than 100 listed rows throws `InvalidResponse` rather
-  than returning an incomplete list that might leave out an ongoing proceeding.
+- `find()` returns at most 100 proceedings (a proceeding can have several rows). A subject with more than 100 listed
+  proceedings throws `InvalidResponse` rather than returning an incomplete list that might leave out an ongoing one.
 
 ## Error handling
 
@@ -588,7 +599,7 @@ Per source:
 | ADIS   | status code 2 (nightly maintenance), 3, SOAP Fault, HTTP ≠ 200, transport error, timeout                                            | `ServiceUnavailable`, `errorCode` = status code 2 or 3, or the SOAP `faultcode` (also with HTTP ≠ 200); otherwise `null`                         |
 | ISIR   | empty result (`WS2`)                                                                                                                | `find()` returns an empty collection                                                                                                             |
 | ISIR   | `WS4` (data not current), `SQL1`, `SERVER1`, SOAP Fault, HTTP ≠ 200, transport error, timeout                                       | `ServiceUnavailable`, `errorCode` = the ISIR code or the SOAP `faultcode` (also with HTTP ≠ 200); otherwise `null`                               |
-| ISIR   | `WS1`, `WS3`, unknown code, truncated answer (`pocetVysledku` above the rows returned), more than 100 rows                          | `InvalidResponse`                                                                                                                                |
+| ISIR   | `WS1`, `WS3`, unknown code, truncated answer (`pocetVysledku` above the rows returned), more than 100 proceedings                   | `InvalidResponse`                                                                                                                                |
 | VIES   | `INVALID_INPUT`, `INVALID_REQUESTER_INFO`, HTTP 400                                                                                 | `InvalidInput`, `errorCode` = VIES code                                                                                                          |
 | VIES   | every other code (`MS_UNAVAILABLE`, `TIMEOUT`, `*_MAX_CONCURRENT_REQ*`, `VAT_BLOCKED`, `IP_BLOCKED`, unknown codes), other statuses | `ServiceUnavailable`, `errorCode` = VIES code when the body is readable                                                                          |
 | any    | element of the wrong type in an id list, a duplicate in a collection constructor                                                    | `InvalidInput`                                                                                                                                   |

@@ -6,6 +6,7 @@ namespace IdSign\BusinessRegisters\Tests\Live;
 
 use IdSign\BusinessRegisters\Exception\InvalidInput;
 use IdSign\BusinessRegisters\Isir\InsolvencyClient;
+use IdSign\BusinessRegisters\Isir\InsolvencyProceeding;
 use PHPUnit\Framework\Attributes\CoversNothing;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
@@ -43,18 +44,25 @@ final class IsirLiveTest extends TestCase
     {
         $proceedings = self::client()->find('45795908');
 
-        self::assertGreaterThanOrEqual(1, \count($proceedings));
-        $proceeding = $proceedings->proceedings[0];
-        self::assertNotNull($proceeding->endedOn);
-        self::assertFalse($proceeding->isOngoing());
+        // the response order is undocumented, so the company's own ended row is searched for
+        $ended = array_filter(
+            $proceedings->proceedings,
+            static fn (InsolvencyProceeding $p): bool => '45795908' === $p->companyId?->value && null !== $p->endedOn,
+        );
+        self::assertGreaterThanOrEqual(1, \count($ended));
+        foreach ($ended as $proceeding) {
+            self::assertFalse($proceeding->isOngoing());
+        }
     }
 
     public function testCompanyIdWithoutLeadingZerosIsFound(): void
     {
         $proceedings = self::client()->find('121100');
 
-        self::assertGreaterThanOrEqual(1, \count($proceedings));
-        self::assertSame('00121100', $proceedings->proceedings[0]->companyId?->value);
+        self::assertTrue(array_any(
+            $proceedings->proceedings,
+            static fn (InsolvencyProceeding $p): bool => '00121100' === $p->companyId?->value,
+        ));
     }
 
     public function testCompanyIdWithAWrongCheckDigitIsRejectedBeforeAnyRequest(): void

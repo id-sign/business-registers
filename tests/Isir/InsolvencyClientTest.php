@@ -11,6 +11,7 @@ use IdSign\BusinessRegisters\Exception\ServiceUnavailable;
 use IdSign\BusinessRegisters\Isir\InsolvencyClient;
 use IdSign\BusinessRegisters\Isir\InsolvencyRegister;
 use IdSign\BusinessRegisters\Source;
+use IdSign\BusinessRegisters\Tests\Double\IsirAnswers;
 use IdSign\BusinessRegisters\Tests\FixtureLoader;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -221,9 +222,7 @@ final class InsolvencyClientTest extends TestCase
 
     public function testFindRejectsAnAnswerFilledBeyondTheRequestedMaximumAsIncomplete(): void
     {
-        $xml = FixtureLoader::read('Isir/sberbank-25083325-konkurs-ongoing.xml');
-        self::assertSame(1, preg_match('~<data>.*</data>~s', $xml, $row));
-        $xml = str_replace([$row[0], '<pocetVysledku>1<'], [str_repeat($row[0], 101), '<pocetVysledku>101<'], $xml);
+        $xml = IsirAnswers::withProceedings(101);
 
         $this->expectException(InvalidResponse::class);
 

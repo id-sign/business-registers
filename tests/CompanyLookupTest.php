@@ -1754,8 +1754,8 @@ final class CompanyLookupTest extends TestCase
         self::assertNotNull($profile);
         self::assertSame(SectionStatus::NotApplicable, $profile->status(Section::Insolvency));
         self::assertNull($profile->insolvencies);
-        self::assertTrue($profile->isComplete());
-        self::assertFalse($profile->isInInsolvency());
+        self::assertFalse($profile->isComplete());
+        self::assertNull($profile->isInInsolvency());
     }
 
     public function testVatSectionStaysOkForASubjectWithoutACompanyIdWhileInsolvencyIsNotApplicable(): void

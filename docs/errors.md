@@ -49,13 +49,14 @@ All implement `Exception\ExceptionInterface`.
   `faultcode`. `stav` is mandatory. No `kodChyby` → the `data` rows, `pocetVysledku` mandatory; a count above the
   number of rows is a truncated answer → `InvalidResponse` at `…/stav/pocetVysledku` (a lower count is accepted).
   The service caps distinct proceedings at `maxPocetVysledku` and returns every debtor row of each, so the client asks
-  for 101: a list cut at 101 proceedings always has more than 100 `data` rows. More than 100 rows is an incomplete
-  list → `InvalidResponse` at `…/data`; exactly 100 rows is a complete answer.
+  for 101: a list cut at 101 proceedings always has more than 100 `data` rows. More than 100 distinct proceedings is
+  an incomplete list → `InvalidResponse` at `…/data`; up to 100 proceedings is a complete answer whatever the rows.
   `WS2` → empty collection. `WS4`, `SQL1`, `SERVER1` → `ServiceUnavailable` with the code and a fixed description
   (`ISIR data are not current`, `ISIR database error`, `ISIR application error`). `WS1`, `WS3` and any other code →
-  `InvalidResponse` at `…/stav/kodChyby` (impossible for a valid id). `cisloSenatu`, `druhVec`, `bcVec`, `rocnik` are
-  mandatory per row; `dalsiDluznikVRizeni` outside `T` / `F`, an `ic` that is not up to 8 digits, an unreadable date
-  or `casSynchronizace` → `InvalidResponse` with the key path.
+  `InvalidResponse` at `…/stav/kodChyby` (impossible for a valid id); the code is read before anything else in `stav`.
+  `cisloSenatu`, `druhVec`, `bcVec`, `rocnik` are mandatory per row; `dalsiDluznikVRizeni` outside `T` / `F`, an `ic`
+  that is not up to 8 digits or an unreadable date → `InvalidResponse` with the key path. `casSynchronizace` is a
+  freshness hint and read leniently: an unreadable value is `synchronisedAt = null`, never an exception.
 - **VIES:** an error arrives with HTTP 200 and `actionSucceed: false` / `errorWrappers` — it is never read as
   `valid: false`. `INVALID_INPUT`, `INVALID_REQUESTER_INFO` → `InvalidInput`; any other code → `ServiceUnavailable`;
   HTTP 400 → `InvalidInput`; other non-200 → `ServiceUnavailable`; both with the first `errorWrappers[0].error` read

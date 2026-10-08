@@ -57,7 +57,7 @@ $profile->vies;                         // ?Vies\ViesResult
 $profile->insolvencies;                 // ?Isir\InsolvencyProceedings
 $profile->status(Section $s): SectionStatus
 $profile->error(Section $s): ?ExceptionInterface
-$profile->isComplete(): bool            // no requested section is Unavailable or Rejected
+$profile->isComplete(): bool            // no requested section Unavailable/Rejected, Insolvency not NotApplicable
 $profile->flags(): list<RiskFlag>       // enum order
 $profile->hasFlag(RiskFlag $f): bool
 $profile->isVatPayer(): ?bool
@@ -124,14 +124,14 @@ $p->isOngoing(): bool                     // endedOn null AND stateCode not ODSK
                                           // missing/unknown state = ongoing; KONKURS/ÚPADEK can be ended
 
 // Value types
-CompanyId::parse(string): CompanyId        // ' 452 746 49 ', '64581' -> '00064581'; checksum; InvalidInput
-CompanyId::tryParse(string): ?CompanyId    // ->value (8 digits), equals(), (string)
+CompanyId::parse(string): CompanyId        // ' 452 746 49 ', '64581' -> '00064581'; checksum; InvalidInput; tryParse(); ->value (8 digits), equals()
 CompanyId::fromRegister(string): CompanyId // format only, no checksum: an IČO ARES uses although it fails it; also for ids stored from ARES
 $id->hasValidCheckDigit(): bool            // false for register ids such as '00123562', '29340042'
 VatId::parse(string, ?string $defaultCountry = null): VatId      // also tryParse(): ?VatId
 // ->countryCode, ->number, isCzech(), equals(), (string) 'CZ45274649'; GR -> EL
 Address: text, street, streetName, houseNumber, houseNumberType, orientationNumber, district, cityDistrict, city,
          postalCode, county, region, countryCode, countryName, addressPointId, municipalityCode; postalCodeFormatted()
+// one meaning for ARES, ADIS, ISIR: street "Duhová 1444/2", its parts only when they split unambiguously
 ```
 
 ## Interpreting the data
@@ -172,7 +172,7 @@ Address: text, street, streetName, houseNumber, houseNumberType, orientationNumb
 | `Rejected` | `null` = unknown; retrying is useless, fix input/config |
 | `NotRequested` | `\LogicException` (pass `Section::Vat`) |
 
-`isInInsolvency()` maps `status(Insolvency)` the same way (`Ok` -> `hasOngoing()`; `null` = unknown, never "not in insolvency").
+`isInInsolvency()` likewise, except `NotApplicable` (no IČO) -> `null`: ISIR can list a person by birth number only.
 
 **ARES is a pointer, not an answer.**
 - A filled `vatId` is no proof of a payer; ADIS decides (`isVatPayer()`). ARES `Vat = Active` includes identified persons.
@@ -245,8 +245,8 @@ way to verify a Spanish trader.
   all other and unknown codes -> `ServiceUnavailable`), never `valid:false`. HTTP 400 -> `InvalidInput`, other non-200
   -> `ServiceUnavailable`, `errorCode` from the body when readable.
 - ISIR: `WS2` -> empty collection; `WS4`, `SQL1`, `SERVER1`, SOAP Fault, HTTP != 200 -> `ServiceUnavailable` (code or
-  `faultcode` as `errorCode`); `WS1`, `WS3`, unknown code, truncated answer, more than 100 rows (incomplete list,
-  never silently cut) -> `InvalidResponse`.
+  `faultcode` as `errorCode`); `WS1`, `WS3`, unknown code, truncated answer, more than 100 proceedings (incomplete
+  list, never silently cut) -> `InvalidResponse`.
 - ARES search above 1 000 matches: `InvalidInput`, `errorCode` `VYSTUP_PRILIS_MNOHO_VYSLEDKU`; ask for a narrower query.
 
 ## Limits
@@ -278,7 +278,7 @@ For change tracking snapshot the DTOs (`$profile->company`, `->vat`, `->vies`, `
 $profile = $lookup->byCompanyId($ico, Section::Vat, Section::Insolvency);   // null: not in ARES (unknown or deleted)
 $payer = $profile->isVatPayer();                       // true / false / null (unknown, retry)
 $insolvent = $profile->isInInsolvency();               // true / false / null, the same way
-if (!$profile->isComplete()) { /* a section Unavailable/Rejected: do not trust absent flags */ }
+if (!$profile->isComplete()) { /* a section Unavailable/Rejected or Insolvency unasked: do not trust absent flags */ }
 
 $requested = array_map(CompanyId::fromRegister(...), $icosFromDb);   // stored from $company->id; parse() is for user input only
 $companies = $ares->findMany($requested);

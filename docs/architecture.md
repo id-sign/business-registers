@@ -38,6 +38,32 @@ consumers depend on the interface and use it for test doubles.
   `Rejected`) but does send it to VIES. A rejected value is no VAT id ADIS or VIES could be asked with. No such value
   from ARES is known; a tolerant `VatId::fromRegister()` waits for a real example that shows what to accept.
 
+## Address
+
+`Address` has one meaning for every source that fills it; `Internal/StreetLine` holds the street-line rule.
+
+| Field                                            | Meaning                                                              |
+|--------------------------------------------------|----------------------------------------------------------------------|
+| `street`                                         | street name, or a place name without one, and the numbers if any: "Duhová 1444/2", "Libotenice 153" |
+| `streetName`, `houseNumber`, `orientationNumber` | the parts of `street`, filled only from a shape that splits unambiguously |
+| `houseNumberType`                                | 1 descriptive (popisné), 2 registration (evidenční), 3 substitute    |
+| `postalCode`                                     | five digits without a space                                          |
+| `district`, `cityDistrict`, `city`, `county`, `region`, `countryName` | as the source writes them       |
+| `text`, `countryCode`, `addressPointId`, `municipalityCode` | ARES only                                 |
+
+- ARES fills every field from its structured address and composes `street`.
+- ARES composes `street` from the street name, else the part of the municipality, else the municipality.
+- ADIS sends the street line `uliceCislo`; its trailing numbers are split off, and a line without a street name
+  ("153") is completed with `castObce`, else `mesto` ("LIBOTENICE 153"). A name ending with a dot is a number label
+  ("č.p. 153") and is not split. ADIS writes names in upper case, and `city` can be a city district ("PRAHA 4").
+- ISIR sends `ulice` and `cisloPopisne` apart; `street` is composed from the two, `houseNumberType` is 1 for a `čp.`
+  prefix, the space in `psc` is removed. `ulice` is the village name where there are no streets ("Libotenice", where
+  ARES has `district`), and `city` can name a city district ("Praha 5").
+- Splitting accepts a trailing `123`, `123/4` or `123/4a` in ASCII digits (ISIR also `čp.123`); any other shape
+  (e.g. ISIR `332E`) stays in `street` only, the parts `null`. Names are not re-cased and "Praha 4" is not split: both
+  would be guesses.
+- VIES returns the address as free text per member state (`ViesResult::$address`), not as an `Address`.
+
 ## HTTP handling
 
 - Every client sends through its own `Internal/HttpTransport` (one per source, built in the client constructor).
@@ -62,8 +88,9 @@ consumers depend on the interface and use it for test doubles.
   `filtrAktualniRizeni=F` (the service's "current only" filter hides only some ended states, so the library asks for
   everything and decides "ongoing" itself in `InsolvencyProceeding::isOngoing()`) and `maxPocetVysledku=101`. The
   service caps distinct proceedings at that number and returns every debtor row of each, so a list cut at 101
-  proceedings always has more than 100 rows: more than 100 rows is `InvalidResponse`. (A complete answer of up to 100
-  proceedings with more than 100 rows is rejected too.) The response order is undocumented. The request children are
+  proceedings always has more than 100 rows: more than 100 distinct proceedings (by `reference()`) is
+  `InvalidResponse`, while a complete answer of up to 100 proceedings is accepted whatever its number of rows. The
+  response order is undocumented. The request children are
   unqualified and their order is fixed by the XSD; another order is a SOAP Fault.
 
 ## Bulk calls and collections
@@ -102,14 +129,17 @@ consumers depend on the interface and use it for test doubles.
   without `Company::vatLookupId()`, `Insolvency` (ISIR, keyed by IČO) without `Company::$id`. A company without a DIČ
   therefore still gets an `Insolvency` answer. `Insolvency` is `Ok` also with an empty collection; the lookup never
   sets `NotFound` for it.
-- `CompanyProfile`: `status()`, `error()`, `isComplete()` (no section `Unavailable` or `Rejected`), `flags()`,
+- `CompanyProfile`: `status()`, `error()`, `isComplete()` (no section `Unavailable` or `Rejected`, and `Insolvency`
+  not `NotApplicable`, whose answer is unknown), `flags()`,
   `hasFlag()`. Flags are computed only from sections in status `Ok` plus the ARES base; an absent flag means "clean"
   only on a complete profile with the section requested.
 - Shortcuts `isVatPayer()` and `hasPublishedAccount()` return `?bool`: `true`/`false` from an `Ok` section, `false` for
   `NotFound` and `NotApplicable`, `null` for `Unavailable` and `Rejected` (unknown, never "not a payer"),
   `\LogicException` for `NotRequested`. No further `VatSubject` API is delegated onto the profile. `isInInsolvency()`
-  follows the same pattern over `Section::Insolvency`: `InsolvencyProceedings::hasOngoing()` for `Ok`, `false` for
-  `NotFound` and `NotApplicable`, `null` for `Unavailable` and `Rejected`, `\LogicException` for `NotRequested`.
+  follows the same pattern over `Section::Insolvency` with one difference: `InsolvencyProceedings::hasOngoing()` for
+  `Ok`, `false` for `NotFound`, `null` for `Unavailable`, `Rejected` and `NotApplicable` (a subject without an IČO
+  can still be listed under its birth number, so an unasked register is no negative answer), `\LogicException` for
+  `NotRequested`. ISIR is asked directly from `profile()`, one `find()` per company; it has no state to share.
 - `SectionStatus` is string-backed; its values are part of the JSON form of a profile and must stay stable.
 - `RiskFlag::InLiquidation` matches the phrase `v\s+likvidaci` (`/iu`) anywhere in the name, provided the character on
   each side is absent or one of whitespace, a straight or typographic quote (`"'„“”‘’‚‛‟«»‹›`), the ARES quote

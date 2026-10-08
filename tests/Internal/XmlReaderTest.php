@@ -476,9 +476,8 @@ final class XmlReaderTest extends TestCase
 
     public function testDateIsMidnightInPragueAndToleratesTheZoneSuffix(): void
     {
-        self::assertSame('2026-10-08T00:00:00+02:00', self::isirValues()->date('day')->format('c'));
         self::assertSame('2026-10-08T00:00:00+02:00', self::isirValues()->optionalDate('day')?->format('c'));
-        self::assertSame('2022-09-13T00:00:00+02:00', self::isirValues()->date('offsetDay')->format('c'));
+        self::assertSame('2022-09-13T00:00:00+02:00', self::isirValues()->optionalDate('offsetDay')?->format('c'));
         self::assertSame('2022-09-13T00:00:00+02:00', self::isirValues()->optionalDate('negativeOffsetDay')?->format('c'));
     }
 
@@ -488,22 +487,14 @@ final class XmlReaderTest extends TestCase
         self::assertNull(self::isirValues()->optionalDate('blank'));
     }
 
-    public function testMandatoryDateReportsAnAbsentElementAsMissing(): void
-    {
-        $data = self::isirValues();
-
-        self::assertSame('ISIR: missing data[1]/nothing', self::failure(static fn () => $data->date('nothing'))->getMessage());
-    }
-
     public function testDateRejectsAnUnreadableDateWithItsPath(): void
     {
         $data = self::isirValues();
         $expected = 'ISIR: expected date (Y-m-d) at data[1]/badDay';
 
-        self::assertSame($expected, self::failure(static fn () => $data->date('badDay'))->getMessage());
         self::assertSame($expected, self::failure(static fn () => $data->optionalDate('badDay'))->getMessage());
-        self::assertSame('ISIR: expected date (Y-m-d) at data[1]/doubleZoneDay', self::failure(static fn () => $data->date('doubleZoneDay'))->getMessage());
-        self::assertSame('ISIR: expected date (Y-m-d) at data[1]/bareZone', self::failure(static fn () => $data->date('bareZone'))->getMessage());
+        self::assertSame('ISIR: expected date (Y-m-d) at data[1]/doubleZoneDay', self::failure(static fn () => $data->optionalDate('doubleZoneDay'))->getMessage());
+        self::assertSame('ISIR: expected date (Y-m-d) at data[1]/bareZone', self::failure(static fn () => $data->optionalDate('bareZone'))->getMessage());
     }
 
     public function testOptionalDateTimePragueReadsTheClockValueAsPragueLocalTime(): void
@@ -545,7 +536,6 @@ final class XmlReaderTest extends TestCase
         $messages = [
             self::failure(static fn () => $reader->int('number'))->getMessage(),
             self::failure(static fn () => $reader->optionalInt('number'))->getMessage(),
-            self::failure(static fn () => $reader->date('day'))->getMessage(),
             self::failure(static fn () => $reader->optionalDate('day'))->getMessage(),
             self::failure(static fn () => $reader->optionalDateTimePrague('moment'))->getMessage(),
         ];

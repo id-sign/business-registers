@@ -59,12 +59,15 @@ final readonly class CompanyProfile
     }
 
     /**
-     * True when no requested section is Unavailable or Rejected.
+     * True when no requested section is Unavailable or Rejected, and Section::Insolvency is not NotApplicable: without
+     * an IČO the register was not asked, and a subject can be listed under its birth number alone, so the answer is
+     * unknown (see isInInsolvency()).
      */
     public function isComplete(): bool
     {
         return !\in_array(SectionStatus::Unavailable, $this->statuses, true)
-            && !\in_array(SectionStatus::Rejected, $this->statuses, true);
+            && !\in_array(SectionStatus::Rejected, $this->statuses, true)
+            && SectionStatus::NotApplicable !== $this->status(Section::Insolvency);
     }
 
     /**
@@ -118,9 +121,9 @@ final readonly class CompanyProfile
      * Whether the insolvency register lists an ongoing proceeding for the subject, a filed petition included
      * (see InsolvencyProceeding::isOngoing()).
      *
-     * The answer is tri-state like isVatPayer(): true or false is definitive (false also when the subject has no
-     * IČO); null means the answer is unknown (Section::Insolvency is Unavailable or Rejected) and must never be
-     * read as "not in insolvency".
+     * The answer is tri-state: true or false is definitive; null means the answer is unknown and must never be read
+     * as "not in insolvency" — Section::Insolvency is Unavailable or Rejected, or NotApplicable: the register was
+     * not asked because the subject has no IČO, and a subject can be listed under its birth number alone.
      *
      * @throws \LogicException Section::Insolvency was not requested
      */
@@ -128,8 +131,8 @@ final readonly class CompanyProfile
     {
         return match ($this->status(Section::Insolvency)) {
             SectionStatus::Ok => ($this->insolvencies ?? throw new \LogicException('Section Insolvency is Ok but the profile holds no proceedings'))->hasOngoing(),
-            SectionStatus::NotFound, SectionStatus::NotApplicable => false,
-            SectionStatus::Unavailable, SectionStatus::Rejected => null,
+            SectionStatus::NotFound => false,
+            SectionStatus::NotApplicable, SectionStatus::Unavailable, SectionStatus::Rejected => null,
             SectionStatus::NotRequested => throw new \LogicException('Section Insolvency was not requested; pass Section::Insolvency to CompanyLookup::byCompanyId()'),
         };
     }

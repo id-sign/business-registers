@@ -12,6 +12,7 @@ use IdSign\BusinessRegisters\Adis\VatSubject;
 use IdSign\BusinessRegisters\Exception\InvalidInput;
 use IdSign\BusinessRegisters\Exception\InvalidResponse;
 use IdSign\BusinessRegisters\Exception\ServiceUnavailable;
+use IdSign\BusinessRegisters\Internal\StreetLine;
 use IdSign\BusinessRegisters\Internal\XmlReader;
 use IdSign\BusinessRegisters\Source;
 use IdSign\BusinessRegisters\VatId;
@@ -166,10 +167,24 @@ final class ResponseParser
             return null;
         }
 
+        $line = $address->optionalString('r:uliceCislo');
+        $district = $address->optionalString('r:castObce');
+        $city = $address->optionalString('r:mesto');
+        $parts = null === $line ? null : StreetLine::splitLine($line);
+
+        // a line without a street name ("153") is completed with the part of the municipality, as ARES does
+        $street = $line;
+        if (null !== $parts) {
+            $street = StreetLine::compose($parts['streetName'] ?? $district ?? $city, $parts['houseNumber'], $parts['orientationNumber']) ?? $line;
+        }
+
         return new Address(
-            street: $address->optionalString('r:uliceCislo'),
-            district: $address->optionalString('r:castObce'),
-            city: $address->optionalString('r:mesto'),
+            street: $street,
+            streetName: $parts['streetName'] ?? null,
+            houseNumber: $parts['houseNumber'] ?? null,
+            orientationNumber: $parts['orientationNumber'] ?? null,
+            district: $district,
+            city: $city,
             postalCode: $address->optionalString('r:psc'),
             countryName: $address->optionalString('r:stat'),
         );

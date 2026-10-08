@@ -18,15 +18,15 @@
   `libxml_use_internal_errors`, and treats an empty body or a missing root as not well-formed. Only the registered
   prefixes resolve; an unprefixed name matches elements without a namespace. Lookups see direct children only.
   Methods: `element` / `optionalElement`, `elements`, `attribute`, `dateAttribute`, and over child text `string`,
-  `int` (digits only, overflow rejected by a round trip), `date` (through `Dates::date()`) and
+  `int` (through `Integers::fromDigits()`), `optionalDate` (through `Dates::date()`, no mandatory twin) and
   `optionalDateTimePrague` (through `Dates::dateTimePrague()`, no mandatory twin), each mandatory/optional where it
-  applies, plus `invalid($relative, $expected)`.
+  applies, plus `invalid($relative, $expected)`. `JsonReader::int` uses `Integers::fromDigits()` for text values too.
 - New source needs (e.g. `int` or `date` on child elements) are added as new methods; existing contracts do not change.
 
 ## Dates
 
-- `Dates::date()` strips one trailing `Z` (the insolvency register sends `2022-09-13Z`; `XmlReader::date` on child
-  text first drops one `±hh:mm` offset, which `xsd:date` allows), parses `!Y-m-d` in
+- `Dates::date()` strips one trailing `Z` (the insolvency register sends `2022-09-13Z`; `XmlReader::optionalDate` on
+  child text first drops one `±hh:mm` offset, which `xsd:date` allows), parses `!Y-m-d` in
   `Europe/Prague` and rejects overflow (`2022-13-45`) by a round trip.
 - `Dates::dateTimeUtc()` accepts ISO 8601 date-times only (`Z`, `±hh:mm`, `±hhmm`, fractions, space-separated form
   read as UTC) and rejects overflow and relative words.
@@ -36,6 +36,18 @@
   trip, so a clock value in the hour skipped by the spring switch is accepted (PHP moves it forward); the hour repeated
   in autumn is read as one of its two instants.
 - All return `null`; the readers turn it into a path-bearing `InvalidResponse`.
+
+## Integers
+
+`Integers::fromDigits()` reads digits only (no sign, no decimals) and rejects a value beyond `PHP_INT_MAX` by a round
+trip, because the cast saturates; it returns `null` and the reader adds the key path.
+
+## StreetLine
+
+The street-line rule of `Address` (`docs/architecture.md` § Address): `compose($name, $houseNumber, $orientationNumber)`
+writes "Duhová 1444/2"; `splitNumbers()` reads an ISIR house-number field (`123`, `123/4`, `123/4a`, `čp.123`) and
+`splitLine()` an ADIS street line with trailing numbers (`Kobližná 70/4`, `153`) unless the name ends with a dot (a
+number label such as `č.p.`). Digits are ASCII only. Any other shape is `null`.
 
 ## ListElement
 

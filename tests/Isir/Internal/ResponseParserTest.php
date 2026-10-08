@@ -10,6 +10,7 @@ use IdSign\BusinessRegisters\Isir\InsolvencyProceeding;
 use IdSign\BusinessRegisters\Isir\InsolvencyProceedings;
 use IdSign\BusinessRegisters\Isir\Internal\ResponseParser;
 use IdSign\BusinessRegisters\Source;
+use IdSign\BusinessRegisters\Tests\Double\IsirAnswers;
 use IdSign\BusinessRegisters\Tests\FixtureLoader;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -132,8 +133,11 @@ final class ResponseParserTest extends TestCase
         $address = self::single('sberbank-25083325-konkurs-ongoing.xml')->address;
 
         self::assertNotNull($address);
+        self::assertSame('U Trezorky 921/2', $address->street);
         self::assertSame('U Trezorky', $address->streetName);
-        self::assertSame('921/2', $address->houseNumber);
+        self::assertSame('921', $address->houseNumber);
+        self::assertSame('2', $address->orientationNumber);
+        self::assertNull($address->houseNumberType);
         self::assertSame('Praha 5', $address->city);
         self::assertSame('15800', $address->postalCode);
         self::assertNull($address->county);
@@ -163,7 +167,10 @@ final class ResponseParserTest extends TestCase
 
         self::assertSame('15 INS 27377/2013', $proceeding->reference());
         self::assertSame('00121100', $proceeding->companyId?->value);
-        self::assertSame('čp.153', $proceeding->address?->houseNumber);
+        self::assertSame('Libotenice 153', $proceeding->address?->street);
+        self::assertSame('153', $proceeding->address->houseNumber);
+        self::assertSame(1, $proceeding->address->houseNumberType);
+        self::assertNull($proceeding->address->orientationNumber);
         self::assertNull($proceeding->insolvencyDeclaredOn);
         self::assertNull($proceeding->endedOn);
         self::assertTrue($proceeding->isOngoing());
@@ -411,13 +418,43 @@ final class ResponseParserTest extends TestCase
         self::assertSame('ISIR: expected date (Y-m-d) at '.self::RESPONSE_PATH.'/data[1]/datumNarozeni', $e->getMessage());
     }
 
-    public function testUnreadableSynchronisationTimeIsInvalidResponseWithItsPath(): void
+    public function testUnreadableSynchronisationTimeIsNullAndKeepsTheProceedings(): void
     {
         $xml = self::changed('sberbank-25083325-konkurs-ongoing.xml', '2026-10-08T09:26:35.000Z', 'yesterday');
 
-        $e = self::invalidResponseFor($xml);
+        $proceedings = ResponseParser::parseProceedings($xml);
 
-        self::assertSame('ISIR: expected date-time at '.self::RESPONSE_PATH.'/stav/casSynchronizace', $e->getMessage());
+        self::assertNull($proceedings->synchronisedAt);
+        self::assertCount(1, $proceedings);
+        self::assertTrue($proceedings->hasOngoing());
+    }
+
+    public function testUnreadableSynchronisationTimeDoesNotHideTheServiceErrorCode(): void
+    {
+        $xml = str_replace(
+            '<kodChyby>WS2</kodChyby>',
+            '<kodChyby>SQL1</kodChyby><casSynchronizace>yesterday</casSynchronizace>',
+            FixtureLoader::read('Isir/cez-45274649-ws2-empty.xml'),
+        );
+
+        try {
+            ResponseParser::parseProceedings($xml);
+            self::fail('Expected ServiceUnavailable');
+        } catch (ServiceUnavailable $e) {
+            self::assertSame('SQL1', $e->errorCode);
+        }
+    }
+
+    public function testHouseNumberOfAnUnknownShapeStaysInTheStreetLineOnly(): void
+    {
+        $address = ResponseParser::parseProceedings(self::changed('sberbank-25083325-konkurs-ongoing.xml', '<cisloPopisne>921/2<', '<cisloPopisne>332E<'))
+            ->proceedings[0]->address;
+
+        self::assertNotNull($address);
+        self::assertSame('U Trezorky 332E', $address->street);
+        self::assertSame('U Trezorky', $address->streetName);
+        self::assertNull($address->houseNumber);
+        self::assertNull($address->orientationNumber);
     }
 
     public function testCompanyIdTheLibraryCannotReadIsInvalidResponseWithItsPath(): void
@@ -535,28 +572,34 @@ final class ResponseParserTest extends TestCase
         self::assertCount(2, ResponseParser::parseProceedings($xml));
     }
 
-    private static function answerWithRows(int $rows): string
+    public function testAnswerOfOneHundredProceedingsIsAccepted(): void
     {
-        $xml = FixtureLoader::read('Isir/sberbank-25083325-konkurs-ongoing.xml');
-        self::assertSame(1, preg_match('~<data>.*</data>~s', $xml, $row));
-
-        return str_replace(
-            [$row[0], '<pocetVysledku>1<'],
-            [str_repeat($row[0], $rows), '<pocetVysledku>'.$rows.'<'],
-            $xml,
-        );
+        self::assertCount(100, ResponseParser::parseProceedings(IsirAnswers::withProceedings(100)));
     }
 
-    public function testAnswerOfOneHundredRowsIsAccepted(): void
+    public function testCompleteAnswerWithMoreRowsThanTheLimitIsAccepted(): void
     {
-        self::assertCount(100, ResponseParser::parseProceedings(self::answerWithRows(100)));
+        self::assertCount(102, ResponseParser::parseProceedings(IsirAnswers::withProceedings(51, 2)));
     }
 
-    public function testAnswerAboveOneHundredRowsIsInvalidResponseAsAnIncompleteList(): void
+    public function testSameCaseReferenceAtTwoCourtsCountsAsTwoProceedings(): void
     {
-        $e = self::invalidResponseFor(self::answerWithRows(101));
+        $xml = IsirAnswers::withProceedings(100);
+        self::assertSame(1, preg_match('~<data>.*?</data>~s', $xml, $row));
+        $otherCourt = str_replace('Městský soud v Praze', 'Krajský soud v Brně', $row[0]);
+        $xml = str_replace(['</data><stav>', '<pocetVysledku>100<'], ['</data>'.$otherCourt.'<stav>', '<pocetVysledku>101<'], $xml);
+
+        $e = self::invalidResponseFor($xml);
+
+        self::assertSame('ISIR: expected at most 100 distinct proceedings at '.self::RESPONSE_PATH.'/data', $e->getMessage());
+    }
+
+    public function testAnswerAboveOneHundredProceedingsIsInvalidResponseAsAnIncompleteList(): void
+    {
+        $e = self::invalidResponseFor(IsirAnswers::withProceedings(101));
 
         self::assertSame(Source::Isir, $e->source);
+        self::assertSame('ISIR: expected at most 100 distinct proceedings at '.self::RESPONSE_PATH.'/data', $e->getMessage());
     }
 
     public function testZeroCountWithoutDataIsAnEmptyCollectionWithTheSynchronisationTime(): void

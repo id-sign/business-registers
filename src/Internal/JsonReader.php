@@ -108,17 +108,7 @@ final readonly class JsonReader
             return null;
         }
 
-        if (1 !== preg_match('/^\d+$/D', $text)) {
-            throw $this->unexpected($key, 'integer');
-        }
-
-        $int = (int) $text;
-        // the cast saturates on overflow
-        if ((string) $int !== (preg_replace('/^0+(?=\d)/', '', $text) ?? $text)) {
-            throw $this->unexpected($key, 'integer');
-        }
-
-        return $int;
+        return Integers::fromDigits($text) ?? throw $this->unexpected($key, 'integer');
     }
 
     /**

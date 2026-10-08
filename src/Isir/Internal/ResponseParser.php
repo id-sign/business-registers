@@ -9,6 +9,7 @@ use IdSign\BusinessRegisters\CompanyId;
 use IdSign\BusinessRegisters\Exception\InvalidInput;
 use IdSign\BusinessRegisters\Exception\InvalidResponse;
 use IdSign\BusinessRegisters\Exception\ServiceUnavailable;
+use IdSign\BusinessRegisters\Internal\StreetLine;
 use IdSign\BusinessRegisters\Internal\XmlReader;
 use IdSign\BusinessRegisters\Isir\InsolvencyProceeding;
 use IdSign\BusinessRegisters\Isir\InsolvencyProceedings;
@@ -22,8 +23,8 @@ use IdSign\BusinessRegisters\Source;
 final class ResponseParser
 {
     /**
-     * Rows of a complete answer. The service caps distinct proceedings at maxPocetVysledku (this plus one) and returns
-     * every debtor row of each, so a list cut at 101 proceedings always has more than 100 rows and is detected.
+     * Distinct proceedings of a complete answer. The service caps distinct proceedings at maxPocetVysledku (this plus
+     * one) and returns every debtor row of each, so more than this many distinct references means a cut list.
      */
     public const int MAX_PROCEEDINGS = 100;
 
@@ -55,11 +56,10 @@ final class ResponseParser
 
         $response = $body->element('ns2:getIsirWsCuzkDataResponse');
         $status = $response->element('stav');
-        $synchronisedAt = $status->optionalDateTimePrague('casSynchronizace');
 
         $code = $status->optionalString('kodChyby');
         if (self::EMPTY_RESULT === $code) {
-            return new InsolvencyProceedings([], $synchronisedAt);
+            return new InsolvencyProceedings([], self::synchronisedAt($status));
         }
         if (null !== $code) {
             throw match ($code) {
@@ -74,11 +74,27 @@ final class ResponseParser
         if ($status->int('pocetVysledku') > \count($rows)) {
             throw $status->invalid('pocetVysledku', 'a count not above the number of data elements');
         }
-        if (\count($rows) > self::MAX_PROCEEDINGS) {
-            throw $response->invalid('data', 'at most '.self::MAX_PROCEEDINGS.' elements');
+
+        $proceedings = array_map(self::proceeding(...), $rows);
+        // a case reference is unique per court only
+        $references = array_unique(array_map(static fn (InsolvencyProceeding $p): string => $p->court.'|'.$p->reference(), $proceedings));
+        if (\count($references) > self::MAX_PROCEEDINGS) {
+            throw $response->invalid('data', 'at most '.self::MAX_PROCEEDINGS.' distinct proceedings');
         }
 
-        return new InsolvencyProceedings(array_map(self::proceeding(...), $rows), $synchronisedAt);
+        return new InsolvencyProceedings($proceedings, self::synchronisedAt($status));
+    }
+
+    /**
+     * The freshness hint casSynchronizace, read leniently: it never decides a verdict, so an unreadable value is null.
+     */
+    private static function synchronisedAt(XmlReader $status): ?\DateTimeImmutable
+    {
+        try {
+            return $status->optionalDateTimePrague('casSynchronizace');
+        } catch (InvalidResponse) {
+            return null;
+        }
     }
 
     /**
@@ -143,20 +159,34 @@ final class ResponseParser
 
     private static function address(XmlReader $row): ?Address
     {
-        $fields = [
-            'streetName' => $row->optionalString('ulice'),
-            'houseNumber' => $row->optionalString('cisloPopisne'),
-            'city' => $row->optionalString('mesto'),
-            'postalCode' => self::withoutWhitespace($row->optionalString('psc')),
-            'county' => $row->optionalString('okres'),
-            'countryName' => $row->optionalString('zeme'),
-        ];
+        $streetName = $row->optionalString('ulice');
+        $numbers = $row->optionalString('cisloPopisne');
+        $city = $row->optionalString('mesto');
+        $postalCode = self::withoutWhitespace($row->optionalString('psc'));
+        $county = $row->optionalString('okres');
+        $countryName = $row->optionalString('zeme');
 
-        if ([] === array_filter($fields, static fn (?string $field): bool => null !== $field)) {
+        if (null === $streetName && null === $numbers && null === $city && null === $postalCode && null === $county && null === $countryName) {
             return null;
         }
 
-        return new Address(...$fields);
+        $parts = null === $numbers ? null : StreetLine::splitNumbers($numbers);
+        // numbers of an unknown shape stay in the street line only, never in the split fields
+        $street = null === $parts
+            ? (null === $numbers ? $streetName : trim(($streetName ?? '').' '.$numbers))
+            : StreetLine::compose($streetName, $parts['houseNumber'], $parts['orientationNumber']) ?? $numbers;
+
+        return new Address(
+            street: $street,
+            streetName: $streetName,
+            houseNumber: $parts['houseNumber'] ?? null,
+            houseNumberType: $parts['houseNumberType'] ?? null,
+            orientationNumber: $parts['orientationNumber'] ?? null,
+            city: $city,
+            postalCode: $postalCode,
+            county: $county,
+            countryName: $countryName,
+        );
     }
 
     private static function withoutWhitespace(?string $value): ?string

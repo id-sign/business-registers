@@ -13,6 +13,7 @@ use IdSign\BusinessRegisters\CompanyId;
 use IdSign\BusinessRegisters\Exception\InvalidInput;
 use IdSign\BusinessRegisters\Exception\InvalidResponse;
 use IdSign\BusinessRegisters\Internal\JsonReader;
+use IdSign\BusinessRegisters\Internal\StreetLine;
 use IdSign\BusinessRegisters\VatId;
 
 /**
@@ -106,7 +107,7 @@ final class CompanyMapper
 
         return new Address(
             text: $address->optionalString('textovaAdresa'),
-            street: self::street($streetName ?? $district ?? $city, $houseNumber, $orientationNumber),
+            street: StreetLine::compose($streetName ?? $district ?? $city, $houseNumber, $orientationNumber),
             streetName: $streetName,
             houseNumber: $houseNumber,
             houseNumberType: $address->optionalInt('typCisloDomovni'),
@@ -122,20 +123,6 @@ final class CompanyMapper
             addressPointId: $address->optionalInt('kodAdresnihoMista'),
             municipalityCode: $address->optionalInt('kodObce'),
         );
-    }
-
-    /**
-     * "Duhová 1444/2"; the name alone without numbers; null without a name.
-     */
-    private static function street(?string $name, ?string $houseNumber, ?string $orientationNumber): ?string
-    {
-        if (null === $name) {
-            return null;
-        }
-
-        $numbers = implode('/', array_filter([$houseNumber, $orientationNumber], static fn (?string $n): bool => null !== $n));
-
-        return '' === $numbers ? $name : $name.' '.$numbers;
     }
 
     /**

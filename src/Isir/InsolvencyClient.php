@@ -19,8 +19,11 @@ final readonly class InsolvencyClient implements InsolvencyRegister
 {
     public const string ENDPOINT = 'https://isir.justice.cz:8443/isir_cuzk_ws/IsirWsCuzkService';
 
-    /** The service filter "current only" hides only some ended states, so every proceeding is requested. */
-    private const string CURRENT_ONLY = 'F';
+    /**
+     * Value of the service filter filtrAktualniRizeni ("current proceedings only"): F switches it off, because it
+     * hides only some ended states, so every proceeding is requested and isOngoing() decides.
+     */
+    private const string CURRENT_FILTER_OFF = 'F';
 
     private HttpTransport $transport;
 
@@ -71,7 +74,7 @@ final readonly class InsolvencyClient implements InsolvencyRegister
             .'<soapenv:Body><typ:getIsirWsCuzkDataRequest>'
             .'<ic>'.htmlspecialchars($id->value, \ENT_XML1).'</ic>'
             .'<maxPocetVysledku>'.(ResponseParser::MAX_PROCEEDINGS + 1).'</maxPocetVysledku>'
-            .'<filtrAktualniRizeni>'.self::CURRENT_ONLY.'</filtrAktualniRizeni>'
+            .'<filtrAktualniRizeni>'.self::CURRENT_FILTER_OFF.'</filtrAktualniRizeni>'
             .'</typ:getIsirWsCuzkDataRequest></soapenv:Body>'
             .'</soapenv:Envelope>';
     }

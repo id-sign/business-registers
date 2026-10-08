@@ -14,7 +14,6 @@ use IdSign\BusinessRegisters\Exception\InvalidResponse;
 use IdSign\BusinessRegisters\Exception\ServiceUnavailable;
 use IdSign\BusinessRegisters\Internal\Identifiers;
 use IdSign\BusinessRegisters\Internal\ListElement;
-use IdSign\BusinessRegisters\Isir\InsolvencyProceedings;
 use IdSign\BusinessRegisters\Isir\InsolvencyRegister;
 use IdSign\BusinessRegisters\Vies\Vies;
 use IdSign\BusinessRegisters\Vies\ViesResult;
@@ -66,7 +65,6 @@ final readonly class CompanyLookup
             $requested,
             fn (VatId $vatId): ?VatSubject => $this->vatRegister()->find($vatId),
             fn (VatId $vatId): ViesResult => $this->vies()->check($vatId, $this->viesRequester),
-            fn (CompanyId $companyId): InsolvencyProceedings => $this->insolvencyRegister()->find($companyId),
         );
     }
 
@@ -171,13 +169,7 @@ final readonly class CompanyLookup
 
         $profiles = [];
         foreach ($companies as $company) {
-            $profiles[] = $this->profile(
-                $company,
-                $requested,
-                $findVat,
-                $checkVies,
-                fn (CompanyId $companyId): InsolvencyProceedings => $this->insolvencyRegister()->find($companyId),
-            );
+            $profiles[] = $this->profile($company, $requested, $findVat, $checkVies);
         }
 
         return new CompanyProfiles($profiles);
@@ -209,12 +201,13 @@ final readonly class CompanyLookup
     }
 
     /**
-     * @param array<string, Section>                     $requested
-     * @param \Closure(VatId): ?VatSubject               $findVat          answers section Vat for a lookup id
-     * @param \Closure(VatId): ViesResult                $checkVies        answers section Vies for a lookup id
-     * @param \Closure(CompanyId): InsolvencyProceedings $findInsolvencies answers section Insolvency for a company id
+     * Section Insolvency is asked directly, one find() per company: it has no bulk call and no state to share.
+     *
+     * @param array<string, Section>       $requested
+     * @param \Closure(VatId): ?VatSubject $findVat   answers section Vat for a lookup id
+     * @param \Closure(VatId): ViesResult  $checkVies answers section Vies for a lookup id
      */
-    private function profile(Company $company, array $requested, \Closure $findVat, \Closure $checkVies, \Closure $findInsolvencies): CompanyProfile
+    private function profile(Company $company, array $requested, \Closure $findVat, \Closure $checkVies): CompanyProfile
     {
         $vatLookupId = $company->vatLookupId();
         $vat = null;
@@ -241,7 +234,7 @@ final readonly class CompanyLookup
                         break;
                     case Section::Insolvency:
                         if (null !== $company->id) {
-                            $insolvencies = $findInsolvencies($company->id);
+                            $insolvencies = $this->insolvencyRegister()->find($company->id);
                             $statuses[$name] = SectionStatus::Ok;
                         }
                         break;

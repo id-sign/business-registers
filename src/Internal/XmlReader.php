@@ -167,30 +167,12 @@ final readonly class XmlReader
             return null;
         }
 
-        if (1 !== preg_match('/^\d+$/D', $text)) {
-            throw $this->invalid($name, 'integer');
-        }
-
-        $int = (int) $text;
-        // the cast saturates on overflow
-        if ((string) $int !== (preg_replace('/^0+(?=\d)/', '', $text) ?? $text)) {
-            throw $this->invalid($name, 'integer');
-        }
-
-        return $int;
+        return Integers::fromDigits($text) ?? throw $this->invalid($name, 'integer');
     }
 
     /**
-     * Child text Y-m-d as midnight in Europe/Prague.
+     * Child text Y-m-d as midnight in Europe/Prague; no mandatory twin, no source needs one.
      *
-     * @throws InvalidResponse
-     */
-    public function date(string $name): \DateTimeImmutable
-    {
-        return $this->optionalDate($name) ?? throw $this->missing($name);
-    }
-
-    /**
      * @throws InvalidResponse
      */
     public function optionalDate(string $name): ?\DateTimeImmutable

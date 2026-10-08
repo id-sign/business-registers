@@ -1023,7 +1023,6 @@ final class CompanyProfileTest extends TestCase
     public static function provideInsolvencyStatusesWithADefinitiveNegative(): iterable
     {
         yield 'not found' => [SectionStatus::NotFound];
-        yield 'company has no id' => [SectionStatus::NotApplicable];
     }
 
     #[DataProvider('provideInsolvencyStatusesWithADefinitiveNegative')]
@@ -1032,6 +1031,21 @@ final class CompanyProfileTest extends TestCase
         $profile = self::profile(statuses: [Section::Insolvency->name => $status]);
 
         self::assertFalse($profile->isInInsolvency());
+    }
+
+    public function testIsInInsolvencyIsUnknownWhenTheSubjectHasNoCompanyIdToAskUnder(): void
+    {
+        $profile = self::profile(statuses: [Section::Insolvency->name => SectionStatus::NotApplicable]);
+
+        self::assertNull($profile->isInInsolvency());
+        self::assertFalse($profile->isComplete());
+    }
+
+    public function testVatSectionNotApplicableKeepsTheProfileComplete(): void
+    {
+        $profile = self::profile(statuses: [Section::Vat->name => SectionStatus::NotApplicable]);
+
+        self::assertTrue($profile->isComplete());
     }
 
     public function testIsInInsolvencyIsUnknownWhenTheSectionIsUnavailable(): void
