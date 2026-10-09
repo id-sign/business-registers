@@ -391,6 +391,20 @@ final class XmlReaderTest extends TestCase
             $e->getMessage(),
         );
         self::assertSame(Source::Adis, $e->source);
+        self::assertNull($e->errorCode);
+    }
+
+    public function testInvalidPassesTheSourceErrorCodeOn(): void
+    {
+        $subject = self::adisResponse()->elements('r:statusSubjektu')[0];
+
+        $e = $subject->invalid('@typSubjektu', 'known subject type', 'X');
+
+        self::assertSame(
+            'ADIS: expected known subject type at '.self::RESPONSE_PATH.'/r:statusSubjektu[1]/@typSubjektu (error code X)',
+            $e->getMessage(),
+        );
+        self::assertSame('X', $e->errorCode);
     }
 
     public function testInvalidNamesAChildElement(): void
@@ -403,6 +417,7 @@ final class XmlReaderTest extends TestCase
             'ADIS: expected name at '.self::RESPONSE_PATH.'/r:statusSubjektu[2]/r:nazevSubjektu',
             $e->getMessage(),
         );
+        self::assertNull($e->errorCode);
     }
 
     // --- child element numbers, dates and date-times ---

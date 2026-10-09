@@ -66,7 +66,7 @@ final class ResponseParser
                 'WS4' => new ServiceUnavailable('ISIR data are not current', Source::Isir, $code),
                 'SQL1' => new ServiceUnavailable('ISIR database error', Source::Isir, $code),
                 'SERVER1' => new ServiceUnavailable('ISIR application error', Source::Isir, $code),
-                default => $status->invalid('kodChyby', 'no error code, WS2, WS4, SQL1 or SERVER1'),
+                default => $status->invalid('kodChyby', 'no error code, WS2, WS4, SQL1 or SERVER1', $code),
             };
         }
 

@@ -57,6 +57,23 @@ final class ExceptionsTest extends TestCase
         self::assertSame('Try later (error code X1)', (new ServiceUnavailable('Try later', Source::Vies, 'X1'))->getMessage());
     }
 
+    public function testInvalidResponseAppendsTheErrorCodeToTheMessageWhenGiven(): void
+    {
+        $exception = new InvalidResponse('ISIR: expected no error code at stav/kodChyby', Source::Isir, 'WS1');
+
+        self::assertSame('ISIR: expected no error code at stav/kodChyby (error code WS1)', $exception->getMessage());
+        self::assertSame('WS1', $exception->errorCode);
+    }
+
+    public function testInvalidResponseErrorCodeAndPreviousAreOptional(): void
+    {
+        $exception = new InvalidResponse('ARES: missing obchodniJmeno', Source::Ares);
+
+        self::assertSame('ARES: missing obchodniJmeno', $exception->getMessage());
+        self::assertNull($exception->errorCode);
+        self::assertNull($exception->getPrevious());
+    }
+
     public function testServiceUnavailableIsNotAConnectionFailureUnlessSaidSo(): void
     {
         self::assertFalse((new ServiceUnavailable('Try later', Source::Isir, 'WS4'))->connectionFailed);
@@ -101,6 +118,7 @@ final class ExceptionsTest extends TestCase
     {
         self::assertSame(\sprintf('Msg (error code %s)', $code), (new InvalidInput('Msg', $code))->getMessage());
         self::assertSame(\sprintf('Msg (error code %s)', $code), (new ServiceUnavailable('Msg', Source::Vies, $code))->getMessage());
+        self::assertSame(\sprintf('Msg (error code %s)', $code), (new InvalidResponse('Msg', Source::Isir, $code))->getMessage());
     }
 
     #[DataProvider('provideNonTokenErrorCodes')]
@@ -108,11 +126,14 @@ final class ExceptionsTest extends TestCase
     {
         $invalidInput = new InvalidInput('Msg', $code);
         $unavailable = new ServiceUnavailable('Msg', Source::Vies, $code);
+        $invalidResponse = new InvalidResponse('Msg', Source::Isir, $code);
 
         self::assertSame('Msg', $invalidInput->getMessage());
         self::assertSame($code, $invalidInput->errorCode);
         self::assertSame('Msg', $unavailable->getMessage());
         self::assertSame($code, $unavailable->errorCode);
+        self::assertSame('Msg', $invalidResponse->getMessage());
+        self::assertSame($code, $invalidResponse->errorCode);
     }
 
     public function testInvalidInputCarriesMessageErrorCodeAndPrevious(): void
@@ -159,7 +180,7 @@ final class ExceptionsTest extends TestCase
     {
         $previous = new \JsonException('cause');
 
-        $exception = new InvalidResponse('ARES: missing obchodniJmeno', Source::Ares, $previous);
+        $exception = new InvalidResponse('ARES: missing obchodniJmeno', Source::Ares, previous: $previous);
 
         self::assertSame('ARES: missing obchodniJmeno', $exception->getMessage());
         self::assertSame(Source::Ares, $exception->source);
@@ -177,6 +198,7 @@ final class ExceptionsTest extends TestCase
         self::assertTrue((new \ReflectionProperty(ServiceUnavailable::class, 'source'))->isReadOnly());
         self::assertTrue((new \ReflectionProperty(ServiceUnavailable::class, 'errorCode'))->isReadOnly());
         self::assertTrue((new \ReflectionProperty(InvalidResponse::class, 'source'))->isReadOnly());
+        self::assertTrue((new \ReflectionProperty(InvalidResponse::class, 'errorCode'))->isReadOnly());
     }
 
     public function testSourceHasExactlyTheFourDocumentedCasesWithLowercaseValues(): void

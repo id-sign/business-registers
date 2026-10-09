@@ -226,7 +226,7 @@ way to verify a Spanish trader.
 |---|---|---|
 | `InvalidInput` (`?string $errorCode`) | bad input or rejected by source | fix input / tell user; retrying is useless |
 | `ServiceUnavailable` (`Source $source`, `?string $errorCode`, `bool $connectionFailed`: not reached) | could not answer: transport, timeout, outage, overload | retry later. NEVER "not a payer" / "invalid" |
-| `InvalidResponse` (`Source $source`) | unreadable answer | investigate and report; message has key path and type only |
+| `InvalidResponse` (`Source $source`, `?string $errorCode`) | unreadable answer | investigate and report; message has key path, type and code only |
 
 - Branch on `$e->errorCode` / `$e->source`, never parse messages. When `errorCode` is a token (`[A-Za-z0-9_.:-]{1,64}`)
   the message ends with ` (error code X)`; `errorCode` itself is raw (untrusted text).
@@ -239,14 +239,14 @@ way to verify a Spanish trader.
 - ARES: 404 with `NENALEZENO` / `VYSTUP_SUBJEKT_NENALEZEN` -> `null` (`findMany()` leaves the id out); 400 ->
   `InvalidInput`, `errorCode` = `subKod`; any other non-200 (also 404 without those codes, 429, 5xx) ->
   `ServiceUnavailable`.
-- ADIS: status 1 / unknown -> `InvalidResponse`; status 2 (nightly 0:00-0:10), 3, SOAP Fault -> `ServiceUnavailable`;
+- ADIS: status 1 / unknown -> `InvalidResponse` with the code; status 2 (nightly 0:00-0:10), 3, SOAP Fault -> `ServiceUnavailable`;
   a SOAP Fault keeps `faultcode` as `errorCode` with any HTTP status.
 - VIES: HTTP 200 bodies with `errorWrappers` are errors (`INVALID_INPUT`, `INVALID_REQUESTER_INFO` -> `InvalidInput`;
   all other and unknown codes -> `ServiceUnavailable`), never `valid:false`. HTTP 400 -> `InvalidInput`, other non-200
   -> `ServiceUnavailable`, `errorCode` from the body when readable.
 - ISIR: `WS2` -> empty collection; `WS4`, `SQL1`, `SERVER1`, SOAP Fault, HTTP != 200 -> `ServiceUnavailable` (code or
-  `faultcode` as `errorCode`); `WS1`, `WS3`, unknown code, truncated answer, more than 100 proceedings (incomplete
-  list, never silently cut) -> `InvalidResponse`.
+  `faultcode` as `errorCode`); `WS1`, `WS3`, unknown code (with the code), truncated answer, more than 100 proceedings
+  (incomplete list, never silently cut) -> `InvalidResponse`.
 - ARES search above 1 000 matches: `InvalidInput`, `errorCode` `VYSTUP_PRILIS_MNOHO_VYSLEDKU`; ask for a narrower query.
 
 ## Limits

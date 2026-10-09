@@ -520,30 +520,29 @@ final class ResponseParserTest extends TestCase
     }
 
     /**
-     * @return iterable<string, array{string}>
+     * @return iterable<string, array{string, string}>
      */
     public static function provideImpossibleStates(): iterable
     {
-        yield 'WS1 wrong parameter combination' => [FixtureLoader::read('Isir/ws1-empty-request.xml')];
-        yield 'WS3 short name' => [str_replace('WS2', 'WS3', FixtureLoader::read('Isir/cez-45274649-ws2-empty.xml'))];
-        yield 'code the service does not define' => [FixtureLoader::read('Isir/status-unknown-code.xml')];
+        yield 'WS1 wrong parameter combination' => [FixtureLoader::read('Isir/ws1-empty-request.xml'), 'WS1'];
+        yield 'WS3 short name' => [str_replace('WS2', 'WS3', FixtureLoader::read('Isir/cez-45274649-ws2-empty.xml')), 'WS3'];
+        yield 'code the service does not define' => [FixtureLoader::read('Isir/status-unknown-code.xml'), 'WS9'];
     }
 
     #[DataProvider('provideImpossibleStates')]
-    public function testStateThatCannotHappenForAValidCompanyIdIsInvalidResponseNamingTheCodeElement(string $xml): void
+    public function testStateThatCannotHappenForAValidCompanyIdIsInvalidResponseCarryingTheCode(string $xml, string $code): void
     {
         $e = self::invalidResponseFor($xml);
 
         self::assertSame(Source::Isir, $e->source);
-        self::assertStringEndsWith(self::RESPONSE_PATH.'/stav/kodChyby', $e->getMessage());
+        self::assertSame($code, $e->errorCode);
+        self::assertStringEndsWith(self::RESPONSE_PATH.'/stav/kodChyby (error code '.$code.')', $e->getMessage());
     }
 
-    public function testErrorTextsAndTheUnknownCodeNeverReachAMessage(): void
+    public function testErrorTextsNeverReachAMessage(): void
     {
-        $unknownCode = self::changed('status-unknown-code.xml', 'WS9', 'SENTINEL-CODE');
         $text = self::changed('ws1-empty-request.xml', 'Nesprávná kombinace parametrů', 'SENTINEL-TEXT');
 
-        self::assertStringNotContainsString('SENTINEL', self::invalidResponseFor($unknownCode)->getMessage());
         self::assertStringNotContainsString('SENTINEL', self::invalidResponseFor($text)->getMessage());
         self::assertStringNotContainsString('SENTINEL', self::unavailableFor(self::changed('status-ws4.xml', 'Neaktuální data', 'SENTINEL-TEXT'))->getMessage());
     }
