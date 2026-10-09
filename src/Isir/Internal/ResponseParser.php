@@ -42,10 +42,12 @@ final class ResponseParser
     /**
      * Proceedings of a getIsirWsCuzkDataResponse in response order.
      *
+     * @param ?int $maxRelevance weakest match kind (relevanceVysledku) the answer may report, null for any
+     *
      * @throws InvalidResponse
      * @throws ServiceUnavailable
      */
-    public static function parseProceedings(string $xml): InsolvencyProceedings
+    public static function parseProceedings(string $xml, ?int $maxRelevance = null): InsolvencyProceedings
     {
         $body = XmlReader::fromString($xml, Source::Isir, self::NAMESPACES)->element('s:Body');
 
@@ -68,6 +70,11 @@ final class ResponseParser
                 'SERVER1' => new ServiceUnavailable('ISIR application error', Source::Isir, $code),
                 default => $status->invalid('kodChyby', 'no error code, WS2, WS4, SQL1 or SERVER1', $code),
             };
+        }
+
+        $relevance = $status->optionalInt('relevanceVysledku');
+        if (null !== $maxRelevance && null !== $relevance && $relevance > $maxRelevance) {
+            throw $status->invalid('relevanceVysledku', 'a relevance of at most '.$maxRelevance);
         }
 
         $rows = $response->elements('data');

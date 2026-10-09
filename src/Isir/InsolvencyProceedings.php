@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace IdSign\BusinessRegisters\Isir;
 
 /**
- * Proceedings the register lists for one company id, in response order.
+ * Proceedings the register lists for one query, in response order.
  *
  * @implements \IteratorAggregate<int, InsolvencyProceeding>
  */

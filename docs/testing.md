@@ -29,9 +29,10 @@
 - Subjects: ČEZ `45274649`, Komerční banka `45317054` (group `CZ699001182`), Praha `00064581`, deleted `04957423`,
   Knihovna J. Mahena `CZ00101494`, LIDRU `CZ00121100`, `CZ11111111`, VIES test service numbers `DE100`–`DE601`
   (passed as `$endpoint`); ISIR: Sberbank `25083325`, ČEZ `45274649`, České aerolinie `45795908`, LIDRU `121100`
-  (legal persons only).
+  (legal persons only), the nonexistent birth number `000000/0000` and the fictitious person Vzorový Jan, born
+  1980-01-01 (both the empty result `WS2`). The live suite never uses a real natural person.
 - The live suite stays within the operator limits: no test sends more than one batch, so `maxConcurrency` never
-  applies and requests run sequentially. ISIR has no batches; its live tests send four single requests.
+  applies and requests run sequentially. ISIR has no batches; its live tests send six single requests.
 - ADIS is down every night 0:00–0:10; ADIS live tests skip then. A VIES test skips when production VIES throttles;
   re-run.
 

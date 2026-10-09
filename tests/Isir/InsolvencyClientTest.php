@@ -182,7 +182,206 @@ final class InsolvencyClientTest extends TestCase
         }
     }
 
+    /**
+     * @return iterable<string, array{string, string}>
+     */
+    public static function provideBirthNumberForms(): iterable
+    {
+        yield 'with slash' => ['000000/0000', '000000/0000'];
+        yield 'without slash' => ['0000000000', '0000000000'];
+        yield 'padded with spaces' => [' 000000/0000 ', '000000/0000'];
+    }
+
+    #[DataProvider('provideBirthNumberForms')]
+    public function testFindByBirthNumberSendsTheBirthNumberAndAnExactMatchInTheOrderTheServiceRequires(string $birthNumber, string $expected): void
+    {
+        $response = self::emptyAnswer();
+
+        new InsolvencyClient(new MockHttpClient($response))->findByBirthNumber($birthNumber);
+
+        $children = self::requestChildren($response);
+        self::assertSame(
+            ['rc', 'maxPocetVysledku', 'filtrAktualniRizeni', 'maxRelevanceVysledku'],
+            array_map(static fn (\SimpleXMLElement $child): string => $child->getName(), $children),
+        );
+        self::assertSame([$expected, '101', 'F', '1'], array_map(static fn (\SimpleXMLElement $child): string => (string) $child, $children));
+        self::assertCount(4, self::requestChildren($response, "[namespace-uri() = '']"));
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function provideRejectedBirthNumbers(): iterable
+    {
+        yield 'empty' => [''];
+        yield 'blank' => ['   '];
+        yield 'letters' => ['abcdef/ghij'];
+        yield 'eight digits' => ['00000000'];
+        yield 'eleven digits' => ['00000000000'];
+        yield 'slash elsewhere' => ['0000/000000'];
+        yield 'markup' => ['</rc><x/>'];
+    }
+
+    #[DataProvider('provideRejectedBirthNumbers')]
+    public function testFindByBirthNumberRejectsAMalformedBirthNumberWithoutAnyRequest(string $birthNumber): void
+    {
+        $httpClient = new MockHttpClient(self::emptyAnswer());
+
+        try {
+            new InsolvencyClient($httpClient)->findByBirthNumber($birthNumber);
+            self::fail('Expected InvalidInput was not thrown.');
+        } catch (InvalidInput) {
+            self::assertSame(0, $httpClient->getRequestsCount());
+        }
+    }
+
+    public function testFindByNameAndBirthDateSendsTheNameTheDateAndAMatchOnAllThreeInTheOrderTheServiceRequires(): void
+    {
+        $response = self::emptyAnswer();
+
+        new InsolvencyClient(new MockHttpClient($response))->findByNameAndBirthDate('Nováková', 'Jana', new \DateTimeImmutable('1980-01-01'));
+
+        $children = self::requestChildren($response);
+        self::assertSame(
+            ['nazevOsoby', 'jmeno', 'datumNarozeni', 'maxPocetVysledku', 'filtrAktualniRizeni', 'vyhledatPresnouShoduJmen', 'maxRelevanceVysledku'],
+            array_map(static fn (\SimpleXMLElement $child): string => $child->getName(), $children),
+        );
+        self::assertSame(['Nováková', 'Jana', '1980-01-01', '101', 'F', 'T', '4'], array_map(static fn (\SimpleXMLElement $child): string => (string) $child, $children));
+        self::assertCount(7, self::requestChildren($response, "[namespace-uri() = '']"));
+    }
+
+    public function testFindByNameAndBirthDateSendsTheCalendarDateOfTheGivenTimeZone(): void
+    {
+        $response = self::emptyAnswer();
+        $bornOn = new \DateTimeImmutable('1980-01-01 00:30', new \DateTimeZone('Europe/Prague'));
+
+        new InsolvencyClient(new MockHttpClient($response))->findByNameAndBirthDate('Nováková', 'Jana', $bornOn);
+
+        self::assertSame('1980-01-01', (string) self::requestChildren($response)[2]);
+    }
+
+    /**
+     * @return iterable<string, array{string, string}>
+     */
+    public static function provideRejectedNames(): iterable
+    {
+        yield 'empty surname' => ['', 'Jana'];
+        yield 'blank surname' => ['  ', 'Jana'];
+        yield 'empty first name' => ['Nováková', ''];
+        yield 'blank first name' => ['Nováková', ' '];
+        yield 'surname in Windows-1250' => ["Nov\xE1kov\xE1", 'Jana'];
+        yield 'first name in Windows-1250' => ['Nováková', "Ji\xF8ina"];
+        yield 'control character in surname' => ["Nov\x01kov\u{E1}", 'Jana'];
+        yield 'NUL in first name' => ['Nováková', "Ja\x00na"];
+        yield 'non-character in first name' => ['Nováková', "Jana\u{FFFF}"];
+        yield 'surname of only no-break spaces' => ["\u{A0}\u{A0}", 'Jana'];
+        yield 'first name of only a zero-width space' => ['Nováková', "\u{200B}"];
+        yield 'surname without a letter' => [' - ', 'Jana'];
+    }
+
+    #[DataProvider('provideRejectedNames')]
+    public function testFindByNameAndBirthDateRejectsAnUnusableNameWithoutAnyRequest(string $surname, string $firstName): void
+    {
+        $httpClient = new MockHttpClient(self::emptyAnswer());
+
+        try {
+            new InsolvencyClient($httpClient)->findByNameAndBirthDate($surname, $firstName, new \DateTimeImmutable('1980-01-01'));
+            self::fail('Expected InvalidInput was not thrown.');
+        } catch (InvalidInput) {
+            self::assertSame(0, $httpClient->getRequestsCount());
+        }
+    }
+
+    /**
+     * @return iterable<string, array{\DateTimeImmutable}>
+     */
+    public static function provideRejectedBirthDates(): iterable
+    {
+        yield 'year 0' => [new \DateTimeImmutable('1980-01-01')->setDate(0, 1, 1)];
+        yield 'negative year' => [new \DateTimeImmutable('1980-01-01')->setDate(-1, 1, 1)];
+        yield 'year 10000' => [new \DateTimeImmutable('1980-01-01')->setDate(10000, 1, 1)];
+    }
+
+    #[DataProvider('provideRejectedBirthDates')]
+    public function testFindByNameAndBirthDateRejectsABirthDateOutsideYearsOneToNineThousandWithoutAnyRequest(\DateTimeImmutable $bornOn): void
+    {
+        $httpClient = new MockHttpClient(self::emptyAnswer());
+
+        try {
+            new InsolvencyClient($httpClient)->findByNameAndBirthDate('Nováková', 'Jana', $bornOn);
+            self::fail('Expected InvalidInput was not thrown.');
+        } catch (InvalidInput) {
+            self::assertSame(0, $httpClient->getRequestsCount());
+        }
+    }
+
     // --- answers ---
+
+    public function testFindByBirthNumberReturnsTheProceedingOfThePerson(): void
+    {
+        $proceedings = new InsolvencyClient(new MockHttpClient(self::xml('by-birth-number-relevance1.xml')))->findByBirthNumber('000000/0000');
+
+        self::assertCount(1, $proceedings);
+        self::assertSame('59 INS 99999/2026', $proceedings->proceedings[0]->reference());
+    }
+
+    public function testFindByBirthNumberReturnsAnEmptyCollectionWhenTheRegisterListsNothing(): void
+    {
+        $proceedings = new InsolvencyClient(new MockHttpClient(self::emptyAnswer()))->findByBirthNumber('000000/0000');
+
+        self::assertCount(0, $proceedings);
+    }
+
+    public function testFindByNameAndBirthDateReturnsTheProceedingOfThePerson(): void
+    {
+        $proceedings = new InsolvencyClient(new MockHttpClient(self::xml('by-name-relevance4.xml')))->findByNameAndBirthDate('Nováková', 'Jana', new \DateTimeImmutable('1980-01-01'));
+
+        self::assertCount(1, $proceedings);
+        self::assertSame('59 INS 99999/2026', $proceedings->proceedings[0]->reference());
+    }
+
+    public function testFindByNameAndBirthDateReturnsAnEmptyCollectionWhenTheRegisterListsNothing(): void
+    {
+        $proceedings = new InsolvencyClient(new MockHttpClient(self::emptyAnswer()))->findByNameAndBirthDate('Nováková', 'Jana', new \DateTimeImmutable('1980-01-01'));
+
+        self::assertCount(0, $proceedings);
+    }
+
+    /**
+     * @return iterable<string, array{\Closure(InsolvencyRegister): mixed, string}> lookup, answer fixture
+     */
+    public static function provideAnswersOfAWeakerMatchThanRequested(): iterable
+    {
+        yield 'name only for a name and birth date' => [static fn (InsolvencyRegister $r): mixed => $r->findByNameAndBirthDate('Nováková', 'Jana', new \DateTimeImmutable('1980-01-01')), 'relevance-above-requested.xml'];
+        yield 'name and birth date for a birth number' => [static fn (InsolvencyRegister $r): mixed => $r->findByBirthNumber('000000/0000'), 'by-name-relevance4.xml'];
+    }
+
+    /**
+     * @param \Closure(InsolvencyRegister): mixed $lookup
+     */
+    #[DataProvider('provideAnswersOfAWeakerMatchThanRequested')]
+    public function testAnswerOfAWeakerMatchThanRequestedIsInvalidResponse(\Closure $lookup, string $fixture): void
+    {
+        $client = new InsolvencyClient(new MockHttpClient(self::xml($fixture)));
+
+        try {
+            $lookup($client);
+        } catch (InvalidResponse $e) {
+            self::assertSame(Source::Isir, $e->source);
+            self::assertStringContainsString('stav/relevanceVysledku', $e->getMessage());
+
+            return;
+        }
+
+        self::fail('Expected InvalidResponse was not thrown.');
+    }
+
+    public function testFindAcceptsAnAnswerOfAnyRelevance(): void
+    {
+        $proceedings = new InsolvencyClient(new MockHttpClient(self::xml('relevance-above-requested.xml')))->find('25083325');
+
+        self::assertCount(1, $proceedings);
+    }
 
     public function testFindReturnsTheOngoingProceedingOfSberbank(): void
     {
@@ -480,6 +679,95 @@ final class InsolvencyClientTest extends TestCase
         }
 
         self::fail('Expected '.$expected.' was not thrown.');
+    }
+
+    // --- no personal data in messages ---
+
+    /**
+     * @return iterable<string, array{\Closure(InsolvencyRegister): mixed, string}> lookup, subject named in messages
+     */
+    public static function provideLookupsOfAPerson(): iterable
+    {
+        yield 'birth number' => [static fn (InsolvencyRegister $r): mixed => $r->findByBirthNumber('999999/9999'), 'a birth number'];
+        yield 'name and birth date' => [static fn (InsolvencyRegister $r): mixed => $r->findByNameAndBirthDate('SENTINEL-SURNAME', 'SENTINEL-FIRST', new \DateTimeImmutable('1980-01-01')), 'a person'];
+    }
+
+    /**
+     * @param \Closure(InsolvencyRegister): mixed $lookup
+     */
+    #[DataProvider('provideLookupsOfAPerson')]
+    public function testHttpErrorOfAPersonLookupNamesTheSubjectButNoPersonalData(\Closure $lookup, string $subject): void
+    {
+        $client = new InsolvencyClient(new MockHttpClient(new MockResponse('', ['http_code' => 500])));
+
+        try {
+            $lookup($client);
+        } catch (ServiceUnavailable $e) {
+            self::assertStringContainsString('500', $e->getMessage());
+            self::assertStringContainsString($subject, $e->getMessage());
+            self::assertNoPersonalData($e->getMessage());
+
+            return;
+        }
+
+        self::fail('Expected ServiceUnavailable was not thrown.');
+    }
+
+    /**
+     * @param \Closure(InsolvencyRegister): mixed $lookup
+     */
+    #[DataProvider('provideLookupsOfAPerson')]
+    public function testTransportErrorOfAPersonLookupNamesTheSubjectButNoPersonalData(\Closure $lookup, string $subject): void
+    {
+        $client = new InsolvencyClient(new MockHttpClient(new MockResponse(info: ['error' => 'host unreachable'])));
+
+        try {
+            $lookup($client);
+        } catch (ServiceUnavailable $e) {
+            self::assertStringContainsString($subject, $e->getMessage());
+            self::assertNoPersonalData($e->getMessage());
+
+            return;
+        }
+
+        self::fail('Expected ServiceUnavailable was not thrown.');
+    }
+
+    /**
+     * @return iterable<string, array{\Closure(InsolvencyRegister): mixed}>
+     */
+    public static function provideRejectedPersonInputsCarryingSentinels(): iterable
+    {
+        yield 'malformed birth number' => [static fn (InsolvencyRegister $r): mixed => $r->findByBirthNumber('999999/99999')];
+        yield 'birth number of letters' => [static fn (InsolvencyRegister $r): mixed => $r->findByBirthNumber('SENTINEL-RC')];
+        yield 'blank first name' => [static fn (InsolvencyRegister $r): mixed => $r->findByNameAndBirthDate('SENTINEL-SURNAME', ' ', new \DateTimeImmutable('1980-01-01'))];
+        yield 'blank surname' => [static fn (InsolvencyRegister $r): mixed => $r->findByNameAndBirthDate(' ', 'SENTINEL-FIRST', new \DateTimeImmutable('1980-01-01'))];
+        yield 'surname not in UTF-8' => [static fn (InsolvencyRegister $r): mixed => $r->findByNameAndBirthDate("SENTINEL-SURNAME\xE1", 'SENTINEL-FIRST', new \DateTimeImmutable('1980-01-01'))];
+        yield 'birth date outside four-digit years' => [static fn (InsolvencyRegister $r): mixed => $r->findByNameAndBirthDate('SENTINEL-SURNAME', 'SENTINEL-FIRST', new \DateTimeImmutable('1980-01-01')->setDate(19800, 1, 1))];
+    }
+
+    /**
+     * @param \Closure(InsolvencyRegister): mixed $lookup
+     */
+    #[DataProvider('provideRejectedPersonInputsCarryingSentinels')]
+    public function testRejectedPersonInputNeverReachesTheMessage(\Closure $lookup): void
+    {
+        try {
+            $lookup(new InsolvencyClient(new MockHttpClient(self::emptyAnswer())));
+        } catch (InvalidInput $e) {
+            self::assertNoPersonalData($e->getMessage());
+
+            return;
+        }
+
+        self::fail('Expected InvalidInput was not thrown.');
+    }
+
+    private static function assertNoPersonalData(string $message): void
+    {
+        self::assertStringNotContainsString('999999', $message);
+        self::assertStringNotContainsString('SENTINEL', $message);
+        self::assertStringNotContainsString('1980', $message);
     }
 
     public function testFaultCodeThatIsFreeTextNeverReachesTheMessage(): void

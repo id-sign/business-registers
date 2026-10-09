@@ -38,6 +38,9 @@ The facade gains the insolvency register section, which reorders two constructor
 - `CompanyProfile::flags()` and `hasFlag()` throw `\LogicException` for a profile whose `Vat` or `Insolvency` section
   is `Ok` but holds no data, as `isVatPayer()` and `isInInsolvency()` do; they returned the flag as absent before.
   Code that builds profiles in tests passes the subject or the proceedings with an `Ok` status.
+- `InsolvencyRegister` has two new methods, `findByBirthNumber(string $birthNumber)` and
+  `findByNameAndBirthDate(string $surname, string $firstName, \DateTimeImmutable $bornOn)`. An own implementation of
+  the interface adds them; PHPUnit stubs and mocks of it need no change.
 
 `InvalidResponse` carries the source's error code, as `InvalidInput` and `ServiceUnavailable` do:
 

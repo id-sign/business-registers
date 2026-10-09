@@ -89,7 +89,7 @@ consumers depend on the interface and use it for test doubles.
 - ADIS and ISIR are SOAP 1.1 over plain HTTP POST without `ext-soap`: the envelope is built by hand and parsed
   through `Internal/XmlReader`. Each source has its own parser and its own lenient `faultCode()`; a shared SOAP helper
   would need the source and the prefix map passed in and save a few lines.
-- ISIR has no bulk query and no published limits: `InsolvencyClient::find()` sends one request with
+- ISIR has no bulk query and no published limits: each lookup sends one request with
   `filtrAktualniRizeni=F` (the service's "current only" filter hides only some ended states, so the library asks for
   everything and decides "ongoing" itself in `InsolvencyProceeding::isOngoing()`) and `maxPocetVysledku=101`. The
   service caps distinct proceedings at that number and returns every debtor row of each, so a list cut at 101
@@ -97,6 +97,15 @@ consumers depend on the interface and use it for test doubles.
   `InvalidResponse`, while a complete answer of up to 100 proceedings is accepted whatever its number of rows. The
   response order is undocumented. The request children are
   unqualified and their order is fixed by the XSD; another order is a SOAP Fault.
+- The three ISIR lookups differ only in the search elements: `find()` sends `ic`; `findByBirthNumber()` sends `rc`
+  (trimmed, otherwise as given) and `maxRelevanceVysledku=1`; `findByNameAndBirthDate()` sends `nazevOsoby`, `jmeno`
+  and `datumNarozeni` as plain `Y-m-d` of the given date (a zone suffix makes the service fall back to a name-only
+  match), `vyhledatPresnouShoduJmen=T` (without it surname and first name match as case-insensitive prefixes, at
+  relevance 4) and `maxRelevanceVysledku=4`. The service reports the match kind in `stav/relevanceVysledku` (1 birth number,
+  2 IČO, 3 case reference, 4 surname + first name + birth date, 5–7 weaker name matches); without
+  `maxRelevanceVysledku` it falls back to a weaker kind, with it it answers `WS2`. The element is undocumented, so the
+  parser rejects an answer above the requested maximum. `find()` sends no maximum and accepts any relevance: rows of
+  natural persons found by IČO carry 3. No lookup by name alone: it matches other people.
 
 ## Bulk calls and collections
 
