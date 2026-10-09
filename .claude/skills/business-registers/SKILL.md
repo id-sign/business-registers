@@ -6,8 +6,8 @@ description: Typed PHP client for Czech business registers (ARES, VAT register A
 # business-registers (id-sign/business-registers v0.1.0)
 
 Stateless PHP 8.4+ library. It covers ARES (company identity), the VAT register ADIS (VAT payer, unreliable payer,
-published bank accounts), VIES (EU VAT id validity) and the insolvency register ISIR (proceedings by IČO). Not
-covered: register extracts, ARES code lists and the ARES change feed.
+published bank accounts), VIES (EU VAT id validity) and the insolvency register ISIR (proceedings by IČO, birth
+number or name and birth date). Not covered: register extracts, ARES code lists and the ARES change feed.
 
 ## Setup
 
@@ -34,7 +34,7 @@ lower `maxConcurrency`. In Symfony register the clients and bind each interface 
 
 - Facade `CompanyLookup`: a profile for one IČO (ARES plus optional ADIS, VIES and ISIR sections, risk flags), or
   `byCompanyIds()` (1 ARES + 1 ADIS request per 100 IČO; VIES one sequential `check()` per distinct lookup DIČ,
-  100 take minutes, a requester rejection stops VIES; ISIR one sequential `find()` per company, 0.10–0.25 s each;
+  100 take minutes, a requester rejection stops VIES; ISIR one sequential `find()` per company, 0.03–0.25 s each;
   2 connection failures in a row stop VIES or ISIR, each company not asked gets its own `ServiceUnavailable`).
 - Single client: bulk checks (`findMany`), search, the list of unreliable payers, a bank account check without ARES, VIES
   for a foreign VAT id.
@@ -111,6 +111,10 @@ check(VatId|string $vatId, VatId|string|null $requester = null, ?Vies\TraderDeta
 
 // Isir\InsolvencyRegister — one request per call, always every proceeding (ended ones too)
 find(CompanyId|string $id): Isir\InsolvencyProceedings   // empty = not on the list NOW (§ 425 removes after 5 years)
+findByBirthNumber(string $birthNumber): Isir\InsolvencyProceedings  // ^\d{6}/?\d{3,4}$ after trim, else InvalidInput
+findByNameAndBirthDate(string $surname, string $firstName, \DateTimeImmutable $bornOn): Isir\InsolvencyProceedings
+// exact, case-insensitive match only, name as on the ID document (other spelling or prefix = empty); no name-only lookup
+// name without a letter, not valid UTF-8, with a character XML 1.0 forbids or decomposed diacritics (NFD), birth year outside 1–9999 = InvalidInput
 // InsolvencyProceedings (readonly, IteratorAggregate, Countable): proceedings (list), synchronisedAt (?DateTimeImmutable,
 // Prague local time, freshness hint only; absent on an empty result), ongoing(): list<…>, hasOngoing(): bool
 // InsolvencyProceeding (readonly, one debtor row; one reference() may span co-debtors or one debtor twice): companyId?,
@@ -171,8 +175,9 @@ Address: text, street, streetName, houseNumber, houseNumberType, orientationNumb
 | `Rejected` | `null` = unknown; retrying is useless, fix input/config |
 | `NotRequested` | `\LogicException` (pass `Section::Vat`) |
 
-`isInInsolvency()` likewise, except `NotApplicable` (no IČO) -> `null`. ISIR is asked by IČO only and lists a person
-by birth number, IČO optional: for a natural person `false` means "nothing under this IČO", not certainty.
+`isInInsolvency()` likewise, except `NotApplicable` (no IČO) -> `null`. The facade asks ISIR by IČO only, and ISIR lists
+a person by birth number, IČO optional: for a natural person `false` means "nothing under this IČO", not certainty;
+call `findByBirthNumber()` / `findByNameAndBirthDate()` with your own data.
 
 **ARES is a pointer, not an answer.**
 - A filled `vatId` is no proof of a payer; ADIS decides (`isVatPayer()`). ARES `Vat = Active` includes identified persons.
@@ -246,7 +251,8 @@ way to verify a Spanish trader.
   -> `ServiceUnavailable`, `errorCode` from the body when readable.
 - ISIR: `WS2` -> empty collection; `WS4`, `SQL1`, `SERVER1`, SOAP Fault, HTTP != 200 -> `ServiceUnavailable` (code or
   `faultcode` as `errorCode`); `WS1`, `WS3`, unknown code (with the code), truncated answer, more than 100 proceedings
-  (incomplete list, never silently cut) -> `InvalidResponse`.
+  (incomplete list, never silently cut), a weaker match than a person lookup asked for -> `InvalidResponse`. Person
+  lookups name "a birth number" / "a person" in messages, never the input.
 - ARES search above 1 000 matches: `InvalidInput`, `errorCode` `VYSTUP_PRILIS_MNOHO_VYSLEDKU`; ask for a narrower query.
 
 ## Limits

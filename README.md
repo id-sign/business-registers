@@ -10,7 +10,8 @@ sources, so you never deal with JSON, SOAP or per-source quirks yourself:
 - **ARES** — company identity: name, seat, legal form, VAT ids, status in 16 source registers; bulk lookup and search.
 - **VAT register (ADIS)** — VAT payer status, unreliable payers, published bank accounts.
 - **VIES** — validity of an EU VAT id, with a consultation number.
-- **Insolvency register (ISIR)** — insolvency proceedings of a subject by IČO, ongoing or ended.
+- **Insolvency register (ISIR)** — insolvency proceedings of a subject by IČO, birth number or name and birth date,
+  ongoing or ended.
 
 Not covered: register extracts (public register, trade register), ARES code lists and the ARES change feed.
 
@@ -48,7 +49,8 @@ Not covered: register extracts (public register, trade register), ARES code list
 - whether a declared name, street, postal code, city and company type match the register, where the member state
   compares them
 
-**Insolvency register (ISIR)** — by IČO, one request per company:
+**Insolvency register (ISIR)** — by IČO, or for a natural person by birth number or by name and birth date; one
+request per lookup:
 
 - every proceeding the register currently lists for the subject, ongoing and ended: case reference, court, state,
   date of the decision on insolvency, end date, link to the case file
@@ -240,12 +242,13 @@ $profile->isInInsolvency();                      // ?bool
 | `Rejected`                    | `null` — **unknown**, fix the input or configuration                                      |
 | `NotRequested`                | throws `\LogicException` — you forgot to pass `Section::Insolvency`                        |
 
-ISIR is asked by IČO only. For a company that is complete: the court always records a company's IČO. A natural person
-with an IČO (a self-employed person) is recorded mainly under the name and birth number, and the court may leave the
-IČO out; ISIR then finds nothing by IČO although the person is in insolvency. So for a natural person `false` (and no
-`RiskFlag::Insolvency`) means "no proceeding recorded under this IČO", not "certainly not in insolvency". The legal
-form in `$profile->company` tells the two apart; to be sure about a natural person, check ISIR under the name or birth
-number yourself.
+The facade asks ISIR by IČO only. For a company that is complete: the court always records a company's IČO. A natural
+person with an IČO (a self-employed person) is recorded mainly under the name and birth number, and the court may leave
+the IČO out; ISIR then finds nothing by IČO although the person is in insolvency. So for a natural person `false` (and
+no `RiskFlag::Insolvency`) means "no proceeding recorded under this IČO", not "certainly not in insolvency". The legal
+form in `$profile->company` tells the two apart; to be sure about a natural person, call
+`InsolvencyClient::findByBirthNumber()` or `findByNameAndBirthDate()` with the data from your own records (name as on
+the identity document), see [Insolvency register (ISIR)](#insolvency-register-isir).
 
 Requesting a section whose client was not passed to the `CompanyLookup` constructor also throws `\LogicException`,
 before any request is made.
@@ -274,17 +277,18 @@ $lookup = new CompanyLookup($ares, $vatRegister, $vies, $isir, viesRequester: Va
 #### Many companies at once
 
 `CompanyLookup::byCompanyIds()` builds the profiles of a list of IČO with as few requests as possible: ARES is asked
-with one `findMany()`, section `Vat` with one ADIS `findMany()` over the companies' `vatLookupId()` values (a VAT group
-is asked once for all its members). 100 IČO with `Section::Vat` are 1 ARES and 1 ADIS request (both clients send
+with one `findMany()`, section `Vat` with one ADIS `findMany()` over the companies' `vatLookupId()` values (a VAT
+group is asked once for all its members). 100 IČO with `Section::Vat` are 1 ARES and 1 ADIS request (both clients send
 batches of 100). VIES has no bulk call: `Section::Vies` makes one `check()` per distinct lookup DIČ (a VAT group is
-checked once for all its members), one after another, so 100 companies with `Vies` take minutes. ISIR has no bulk
-call either: `Section::Insolvency` makes one `find()` per company, one after another in ARES response order —
-typically 0.10–0.25 s each (100 companies ≈ 10–25 s). After two connection failures in a row (timeout, refused or
-blocked connection, e.g. port 8443 closed by a firewall; `ServiceUnavailable::$connectionFailed`) to VIES or to ISIR,
-each counted on its own, no further request to that source is sent in that call, so an unreachable source costs two timeouts, not one per company; a single slow
-answer does not stop the call. Every company not yet asked gets that section `Unavailable` with its own
-`ServiceUnavailable` ("… was not sent after 2 connection failures in a row", `connectionFailed` true, the last
-failure as the previous exception). An answer, an error code or an HTTP error resets the count.
+checked once for all its members), one after another, 1.3–2 s each, so 100 companies with `Vies` take about 3 minutes.
+ISIR has no bulk call either: `Section::Insolvency` makes one `find()` per company, one after another in ARES response
+order — typically 0.03–0.25 s each (100 companies ≈ 3–25 s). After two connection failures in a row (timeout, refused
+or blocked connection, e.g. port 8443 closed by a firewall; `ServiceUnavailable::$connectionFailed`) to VIES or to
+ISIR, each counted on its own, no further request to that source is sent in that call, so an unreachable source costs
+two timeouts, not one per company; a single slow answer does not stop the call. Every company not yet asked gets that
+section `Unavailable` with its own `ServiceUnavailable` ("… was not sent after 2 connection failures in a row",
+`connectionFailed` true, the last failure as the previous exception). An answer, an error code or an HTTP error resets
+the count.
 
 ```php
 use IdSign\BusinessRegisters\CompanyId;
@@ -542,7 +546,8 @@ foreach ($proceedings as $proceeding) {          // also $proceedings->proceedin
 - A row is one debtor of a proceeding. Rows sharing a `reference()` can be co-debtors (with the co-debtor's personal
   data) or the same debtor listed twice (two addresses), so `count()` can count a proceeding twice.
   `otherDebtorInProceeding` is the register's raw `dalsiDluznikVRizeni`; its meaning is undocumented and observed to
-  vary by query, so do not read it as "has co-debtors". A natural person is found by IČO only if the court recorded it.
+  vary by query, so do not read it as "has co-debtors". A natural person is found by IČO only if the court recorded
+  it; look it up by birth number or by name and birth date (below).
 - `insolvencyDeclaredOn` can be `null` although insolvency was declared (older proceedings); `stateCode` decides.
   `addressKind` is the raw `druhAdresy`, observed `SÍDLO FY`, `SÍDLO ORG.`, `TRVALÁ`.
 - The ministry runs the successor eISIR in verification operation and has announced a change of the web services
@@ -551,10 +556,33 @@ foreach ($proceedings as $proceeding) {          // also $proceedings->proceedin
   birth date, name and address of natural persons. Your application is the controller of that personal data.
 - `synchronisedAt` is the register's own freshness hint, read as Prague local time (verified in summer time only); the
   register omits it for an empty result, and an unreadable value is `null`. It is never part of a verdict.
-- The service listens on port 8443 (`https://isir.justice.cz:8443/...`); allow it in your egress firewall. One `find()`
-  is one request, 0.1–0.25 s observed.
+- The service listens on port 8443 (`https://isir.justice.cz:8443/...`); allow it in your egress firewall. Each lookup
+  is one request, 0.03–0.25 s observed.
 - `find()` returns at most 100 proceedings (a proceeding can have several rows). A subject with more than 100 listed
   proceedings throws `InvalidResponse` rather than returning an incomplete list that might leave out an ongoing one.
+
+A natural person is recorded mainly under the birth number and the name. ARES does not publish either, so these two
+lookups take what your own records hold and return the same `InsolvencyProceedings` as `find()`:
+
+```php
+$isir->findByBirthNumber('000000/0000');         // exact match on the birth number, with or without the slash
+$isir->findByNameAndBirthDate('Nováková', 'Jana', new \DateTimeImmutable('1980-01-01')); // all three must match exactly, case-insensitive
+```
+
+- `findByBirthNumber()` accepts six digits, an optional slash and three or four digits (surrounding whitespace is
+  ignored); anything else is `InvalidInput` before any request. The check digit is not verified: an unknown number
+  gives an empty collection.
+- `findByNameAndBirthDate()` sends the calendar date of `$bornOn` in its own time zone. Surname and first name must
+  match the register exactly, ignoring letter case, so pass them as on the identity document; white space around them,
+  no-break and zero-width spaces included, is ignored. A different spelling (diacritics, a double surname) or a
+  shortened name gives an empty collection. A surname or first name without a letter, a name that is not valid UTF-8,
+  holds a character XML 1.0 forbids or decomposed diacritics (a letter followed by a combining mark, as macOS file
+  names or PDF copies hold it; the register holds Unicode NFC only), or a birth year outside 1–9999 is `InvalidInput`
+  before any request.
+- Both ask the service for that match only; an answer reporting a weaker match, or no match kind at all
+  (`relevanceVysledku`), is `InvalidResponse`, never another person's proceedings. There is no lookup by name alone.
+- Exception messages name "a birth number" or "a person", never the birth number, name or date. The parameters that
+  carry them are `#[\SensitiveParameter]`, so stack traces leave them out too.
 
 ## Error handling
 
@@ -615,6 +643,7 @@ Per source:
 | ISIR   | empty result (`WS2`)                                                                                                                | `find()` returns an empty collection                                                                                                             |
 | ISIR   | `WS4` (data not current), `SQL1`, `SERVER1`, SOAP Fault, HTTP ≠ 200, transport error, timeout                                       | `ServiceUnavailable`, `errorCode` = the ISIR code or the SOAP `faultcode` (also with HTTP ≠ 200); otherwise `null`                               |
 | ISIR   | `WS1`, `WS3`, unknown code, truncated answer (`pocetVysledku` above the rows returned), more than 100 proceedings                   | `InvalidResponse`, `errorCode` = the ISIR code for `WS1`, `WS3` and an unknown code; otherwise `null`                                            |
+| ISIR   | a weaker or missing match kind (`relevanceVysledku`) for `findByBirthNumber()` or `findByNameAndBirthDate()`                       | `InvalidResponse`, `errorCode` `null`                                                                                                            |
 | VIES   | `INVALID_INPUT`, `INVALID_REQUESTER_INFO`, HTTP 400                                                                                 | `InvalidInput`, `errorCode` = VIES code                                                                                                          |
 | VIES   | every other code (`MS_UNAVAILABLE`, `TIMEOUT`, `*_MAX_CONCURRENT_REQ*`, `VAT_BLOCKED`, `IP_BLOCKED`, unknown codes), other statuses | `ServiceUnavailable`, `errorCode` = VIES code when the body is readable                                                                          |
 | any    | element of the wrong type in an id list, a duplicate in a collection constructor                                                    | `InvalidInput`                                                                                                                                   |
@@ -662,7 +691,11 @@ lists.
 - ADIS is unavailable every night from 0:00 to 0:10 (`ServiceUnavailable`, `errorCode` `2`).
 - VIES and the member states throttle concurrent requests (`MS_MAX_CONCURRENT_REQ`, `GLOBAL_MAX_CONCURRENT_REQ`);
   treat these as `ServiceUnavailable` and retry later. Some member states do not disclose name and address.
-- ISIR has no bulk query: one `find()` is one request, 0.1–0.25 s observed.
+- ISIR has no bulk query: each lookup (`find()`, `findByBirthNumber()`, `findByNameAndBirthDate()`) is one request.
+- Response times observed for one company (October 2026, connection already open): ARES ≈ 0.05 s, ADIS ≈ 0.1 s,
+  ISIR ≈ 0.03 s, VIES 1.3–2 s. A `byCompanyId()` with all three sections takes ≈ 1.8 s, about 90 % of it VIES; request
+  `Section::Vies` only when you need the EU validity, and the profile takes ≈ 0.25 s. The first request to each host
+  also opens the connection (0.1–0.25 s), which under PHP-FPM happens again in every process.
 - Default timeout 10 s per request (idle and total), including the time a request waits queued at the source.
 
 The operators publish terms of use. The library is stateless and does not enforce them; a breach can get your IP

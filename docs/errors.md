@@ -46,9 +46,14 @@ All implement `Exception\ExceptionInterface`.
 - **ADIS:** HTTP ≠ 200 → `ServiceUnavailable`, code = `faultcode` when the body is a SOAP Fault (read leniently),
   else `null`; SOAP Fault with HTTP 200 → the same; `statusCode` 2 (maintenance) and 3 (unavailable) →
   `ServiceUnavailable` with the code; 1 or unknown → `InvalidResponse` with the code; `NENALEZEN` → `null` / absent.
-- **ISIR:** HTTP ≠ 200 → `ServiceUnavailable` (`ISIR returned HTTP {status} for company id {id}`), code = `faultcode`
-  when the body is a SOAP Fault (read leniently), else `null`; SOAP Fault with HTTP 200 → `ServiceUnavailable`, code =
-  `faultcode`. `stav` is mandatory. No `kodChyby` → the `data` rows, `pocetVysledku` mandatory; a count above the
+- **ISIR:** a blank or malformed birth number (not `^\d{6}/?\d{3,4}$` after trim), a surname or first name without a
+  letter, a name that is not valid UTF-8, holds a character XML 1.0 forbids or decomposed diacritics (a Latin letter
+  followed by a combining mark), or a birth year outside 1–9999 → `InvalidInput` with a fixed message, before any
+  request. HTTP ≠ 200 → `ServiceUnavailable` (`ISIR returned HTTP
+  {status} for company id {id}`, `… for a birth number`, `… for a person`; the transport message names the same
+  subject — never the birth number, name or birth date; the parameters, the request and the answer that carry them are
+  `#[\SensitiveParameter]`, so stack traces leave them out), code = `faultcode` when the body is a SOAP Fault (read
+  leniently), else `null`; SOAP Fault with HTTP 200 → `ServiceUnavailable`, code = `faultcode`. `stav` is mandatory. No `kodChyby` → the `data` rows, `pocetVysledku` mandatory; a count above the
   number of rows is a truncated answer → `InvalidResponse` at `…/stav/pocetVysledku` (a lower count is accepted).
   The service caps distinct proceedings at `maxPocetVysledku` and returns every debtor row of each, so the client asks
   for 101: a list cut at 101 proceedings always has more than 100 `data` rows. More than 100 distinct proceedings is
@@ -56,8 +61,10 @@ All implement `Exception\ExceptionInterface`.
   `WS2` → empty collection. `WS4`, `SQL1`, `SERVER1` → `ServiceUnavailable` with the code and a fixed description
   (`ISIR data are not current`, `ISIR database error`, `ISIR application error`). `WS1`, `WS3` and any other code →
   `InvalidResponse` at `…/stav/kodChyby` with the code (impossible for a valid id); the code is read before anything
-  else in `stav`. `cisloSenatu`, `druhVec`, `bcVec`, `rocnik` are mandatory per row; `dalsiDluznikVRizeni` outside
-  `T` / `F`, an `ic` that is not up to 8 digits or an unreadable date → `InvalidResponse` with the key path.
+  else in `stav`. For a person lookup, a `relevanceVysledku` missing or above the requested maximum (1 by birth number,
+  4 by name and birth date) → `InvalidResponse` at `…/stav/relevanceVysledku`; `find()` does not read it.
+  `cisloSenatu`, `druhVec`, `bcVec`, `rocnik` are mandatory per row; `dalsiDluznikVRizeni` outside `T` / `F`, an `ic` that is not up to 8 digits
+  or an unreadable date → `InvalidResponse` with the key path.
   `casSynchronizace` is a freshness hint and read leniently: an unreadable value is `synchronisedAt = null`, never an
   exception.
 - **VIES:** an error arrives with HTTP 200 and `actionSucceed: false` / `errorWrappers` — it is never read as

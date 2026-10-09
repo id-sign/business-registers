@@ -65,6 +65,19 @@ final class IsirLiveTest extends TestCase
         ));
     }
 
+    /**
+     * The service accepts the request and answers the empty result WS2.
+     */
+    public function testNonexistentBirthNumberHasNoProceedingListed(): void
+    {
+        self::assertCount(0, self::client()->findByBirthNumber('000000/0000'));
+    }
+
+    public function testFictitiousPersonHasNoProceedingListed(): void
+    {
+        self::assertCount(0, self::client()->findByNameAndBirthDate('Vzorový', 'Jan', new \DateTimeImmutable('1980-01-01')));
+    }
+
     public function testCompanyIdWithAWrongCheckDigitIsRejectedBeforeAnyRequest(): void
     {
         $this->expectException(InvalidInput::class);
