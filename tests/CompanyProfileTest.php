@@ -730,13 +730,6 @@ final class CompanyProfileTest extends TestCase
         self::assertSame([], $profile->flags());
     }
 
-    public function testInsolvencyFlagIsNotRaisedByAnOkSectionThatHoldsNoCollection(): void
-    {
-        $profile = self::profile(statuses: self::insolvencyOk());
-
-        self::assertFalse($profile->hasFlag(RiskFlag::Insolvency));
-    }
-
     public function testInsolvencyFlagDoesNotFollowTheAresInsolvencyRecord(): void
     {
         $company = CompanyFactory::create(statuses: [AresRegister::Insolvency->value => RegistrationStatus::Active]);
@@ -1087,6 +1080,33 @@ final class CompanyProfileTest extends TestCase
         $this->expectException(\LogicException::class);
 
         self::profile(statuses: self::insolvencyOk())->isInInsolvency();
+    }
+
+    /**
+     * @return iterable<string, array{array<string, SectionStatus>, RiskFlag}>
+     */
+    public static function provideOkSectionsWithoutData(): iterable
+    {
+        yield 'insolvency' => [[Section::Insolvency->name => SectionStatus::Ok], RiskFlag::Insolvency];
+        yield 'vat' => [[Section::Vat->name => SectionStatus::Ok], RiskFlag::UnreliableVatPayer];
+    }
+
+    /**
+     * @param array<string, SectionStatus> $statuses
+     */
+    #[DataProvider('provideOkSectionsWithoutData')]
+    public function testFlagsThrowForAnOkSectionWithoutDataLikeTheShortcuts(array $statuses, RiskFlag $flag): void
+    {
+        $profile = self::profile(statuses: $statuses);
+
+        foreach ([static fn (): array => $profile->flags(), static fn (): bool => $profile->hasFlag($flag)] as $call) {
+            try {
+                $call();
+                self::fail('Expected LogicException');
+            } catch (\LogicException $e) {
+                self::assertStringContainsString('is Ok but the profile holds no', $e->getMessage());
+            }
+        }
     }
 
     public function testProfileWithAnInsolvencySectionIsJsonEncodableWithEveryProceedingAndTheSynchronisationTime(): void

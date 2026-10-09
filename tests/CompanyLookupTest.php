@@ -291,6 +291,11 @@ final class CompanyLookupTest extends TestCase
         return $register;
     }
 
+    private static function connectionFailure(Source $source): ServiceUnavailable
+    {
+        return new ServiceUnavailable('request failed', $source, previous: new TransportException('Connection timed out'), connectionFailed: true);
+    }
+
     /**
      * @return \ArrayObject<int, string> empty log of ISIR calls
      */
@@ -1442,6 +1447,65 @@ final class CompanyLookupTest extends TestCase
         self::assertSame($ok, $second->vies);
     }
 
+    public function testBulkLookupStopsAskingViesAfterTwoConnectionFailuresInARow(): void
+    {
+        $first = self::connectionFailure(Source::Vies);
+        $second = self::connectionFailure(Source::Vies);
+        $asked = self::callLog();
+        $lookup = new CompanyLookup(
+            $this->directoryFindingMany([
+                self::bulkCompany('45274649', 'CZ45274649'),
+                self::bulkCompany('28255933', 'CZ28255933'),
+                self::bulkCompany('26168685', 'CZ28255933'),
+                self::bulkCompany('27082440', 'CZ27082440'),
+                self::bulkCompany('45317054', 'CZ45317054'),
+            ]),
+            null,
+            $this->viesAnswering(['CZ45274649' => $first, 'CZ28255933' => $second], $asked, 2),
+        );
+
+        $profiles = $lookup->byCompanyIds(['45274649', '28255933', '26168685', '27082440', '45317054'], Section::Vies);
+
+        self::assertSame([['CZ45274649', null], ['CZ28255933', null]], $asked->getArrayCopy());
+        self::assertSame($second, $profiles->get('26168685')?->error(Section::Vies));
+        foreach (['27082440', '45317054'] as $ico) {
+            $profile = $profiles->get($ico);
+            self::assertNotNull($profile);
+            self::assertSame(SectionStatus::Unavailable, $profile->status(Section::Vies));
+            $error = $profile->error(Section::Vies);
+            self::assertInstanceOf(ServiceUnavailable::class, $error);
+            self::assertSame(Source::Vies, $error->source);
+            self::assertTrue($error->connectionFailed);
+            self::assertSame($second, $error->getPrevious());
+            self::assertSame(\sprintf('VIES request for VAT id CZ%s was not sent after 2 connection failures in a row', $ico), $error->getMessage());
+        }
+    }
+
+    public function testBulkLookupKeepsAskingViesWhenAnAnswerBreaksTheConnectionFailures(): void
+    {
+        $asked = self::callLog();
+        $lookup = new CompanyLookup(
+            $this->directoryFindingMany([
+                self::bulkCompany('45274649', 'CZ45274649'),
+                self::bulkCompany('28255933', 'CZ28255933'),
+                self::bulkCompany('27082440', 'CZ27082440'),
+                self::bulkCompany('45317054', 'CZ45317054'),
+            ]),
+            null,
+            $this->viesAnswering([
+                'CZ45274649' => self::connectionFailure(Source::Vies),
+                'CZ28255933' => new ServiceUnavailable('VIES is busy', Source::Vies, 'MS_MAX_CONCURRENT_REQ'),
+                'CZ27082440' => self::connectionFailure(Source::Vies),
+                'CZ45317054' => self::viesResult(vatId: 'CZ45317054'),
+            ], $asked, 4),
+        );
+
+        $profiles = $lookup->byCompanyIds(['45274649', '28255933', '27082440', '45317054'], Section::Vies);
+
+        self::assertCount(4, $asked);
+        self::assertSame(SectionStatus::Ok, $profiles->get('45317054')?->status(Section::Vies));
+    }
+
     public function testBulkLookupViesRequesterRejectionLeavesVatAndNotApplicableCompaniesUntouched(): void
     {
         $rejection = new InvalidInput('VIES rejected the request', 'INVALID_REQUESTER_INFO');
@@ -1924,54 +1988,100 @@ final class CompanyLookupTest extends TestCase
         self::assertNull($failed->insolvencies);
     }
 
-    public function testBulkLookupStopsAskingIsirAfterAConnectionFailure(): void
+    public function testBulkLookupStopsAskingIsirAfterTwoConnectionFailuresInARow(): void
     {
-        $outage = new ServiceUnavailable('ISIR request failed', Source::Isir, previous: new TransportException('Connection timed out'));
+        $first = self::connectionFailure(Source::Isir);
+        $second = self::connectionFailure(Source::Isir);
         $asked = self::idLog();
         $lookup = new CompanyLookup(
             $this->directoryFindingManyOnce([
                 self::bulkCompany('45274649'),
                 self::bulkCompany('28255933'),
                 self::bulkCompany('45317054'),
+                self::bulkCompany('26168685'),
             ]),
             insolvencyRegister: $this->insolvencyRegisterAnswering(
-                ['45274649' => self::proceedings(), '28255933' => $outage, '45317054' => self::proceedings()],
+                ['45274649' => self::proceedings(), '28255933' => $first, '45317054' => $second],
                 $asked,
-                2,
+                3,
             ),
         );
 
-        $profiles = $lookup->byCompanyIds(['45274649', '28255933', '45317054'], Section::Insolvency);
+        $profiles = $lookup->byCompanyIds(['45274649', '28255933', '45317054', '26168685'], Section::Insolvency);
 
-        self::assertSame(['45274649', '28255933'], $asked->getArrayCopy());
+        self::assertSame(['45274649', '28255933', '45317054'], $asked->getArrayCopy());
         self::assertSame(SectionStatus::Ok, $profiles->get('45274649')?->status(Section::Insolvency));
-        foreach (['28255933', '45317054'] as $id) {
-            $profile = $profiles->get($id);
-            self::assertNotNull($profile);
-            self::assertSame(SectionStatus::Unavailable, $profile->status(Section::Insolvency));
-            self::assertSame($outage, $profile->error(Section::Insolvency));
-            self::assertNull($profile->insolvencies);
-        }
+        self::assertSame($first, $profiles->get('28255933')?->error(Section::Insolvency));
+        self::assertSame($second, $profiles->get('45317054')?->error(Section::Insolvency));
+        $notAsked = $profiles->get('26168685');
+        self::assertNotNull($notAsked);
+        self::assertSame(SectionStatus::Unavailable, $notAsked->status(Section::Insolvency));
+        self::assertNull($notAsked->insolvencies);
+        $error = $notAsked->error(Section::Insolvency);
+        self::assertInstanceOf(ServiceUnavailable::class, $error);
+        self::assertSame(Source::Isir, $error->source);
+        self::assertTrue($error->connectionFailed);
+        self::assertSame($second, $error->getPrevious());
+        self::assertSame('ISIR request for company id 26168685 was not sent after 2 connection failures in a row', $error->getMessage());
     }
 
-    public function testBulkLookupKeepsAskingIsirAfterAServiceError(): void
+    public function testBulkLookupKeepsAskingIsirAfterASingleConnectionFailure(): void
+    {
+        $asked = self::idLog();
+        $lookup = new CompanyLookup(
+            $this->directoryFindingManyOnce([
+                self::bulkCompany('45274649'),
+                self::bulkCompany('28255933'),
+                self::bulkCompany('45317054'),
+                self::bulkCompany('26168685'),
+            ]),
+            insolvencyRegister: $this->insolvencyRegisterAnswering(
+                [
+                    '45274649' => self::connectionFailure(Source::Isir),
+                    '28255933' => self::proceedings(),
+                    '45317054' => self::connectionFailure(Source::Isir),
+                    '26168685' => self::proceedings(),
+                ],
+                $asked,
+                4,
+            ),
+        );
+
+        $profiles = $lookup->byCompanyIds(['45274649', '28255933', '45317054', '26168685'], Section::Insolvency);
+
+        self::assertSame(['45274649', '28255933', '45317054', '26168685'], $asked->getArrayCopy());
+        self::assertSame(SectionStatus::Ok, $profiles->get('28255933')?->status(Section::Insolvency));
+        self::assertSame(SectionStatus::Ok, $profiles->get('26168685')?->status(Section::Insolvency));
+    }
+
+    public function testBulkLookupKeepsAskingIsirWhenAServiceErrorBreaksTheConnectionFailures(): void
     {
         $dataNotCurrent = new ServiceUnavailable('ISIR data are not current', Source::Isir, 'WS4');
         $asked = self::idLog();
         $lookup = new CompanyLookup(
-            $this->directoryFindingManyOnce([self::bulkCompany('45274649'), self::bulkCompany('28255933')]),
+            $this->directoryFindingManyOnce([
+                self::bulkCompany('45274649'),
+                self::bulkCompany('28255933'),
+                self::bulkCompany('45317054'),
+                self::bulkCompany('26168685'),
+            ]),
             insolvencyRegister: $this->insolvencyRegisterAnswering(
-                ['45274649' => $dataNotCurrent, '28255933' => self::proceedings()],
+                [
+                    '45274649' => self::connectionFailure(Source::Isir),
+                    '28255933' => $dataNotCurrent,
+                    '45317054' => self::connectionFailure(Source::Isir),
+                    '26168685' => self::proceedings(),
+                ],
                 $asked,
-                2,
+                4,
             ),
         );
 
-        $profiles = $lookup->byCompanyIds(['45274649', '28255933'], Section::Insolvency);
+        $profiles = $lookup->byCompanyIds(['45274649', '28255933', '45317054', '26168685'], Section::Insolvency);
 
-        self::assertSame(['45274649', '28255933'], $asked->getArrayCopy());
-        self::assertSame(SectionStatus::Unavailable, $profiles->get('45274649')?->status(Section::Insolvency));
-        self::assertSame(SectionStatus::Ok, $profiles->get('28255933')?->status(Section::Insolvency));
+        self::assertSame(['45274649', '28255933', '45317054', '26168685'], $asked->getArrayCopy());
+        self::assertSame($dataNotCurrent, $profiles->get('28255933')?->error(Section::Insolvency));
+        self::assertSame(SectionStatus::Ok, $profiles->get('26168685')?->status(Section::Insolvency));
     }
 
     public function testBulkLookupIsirInvalidResponseOfOneCompanyLeavesTheOthersOk(): void

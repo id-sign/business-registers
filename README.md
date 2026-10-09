@@ -239,6 +239,13 @@ $profile->isInInsolvency();                      // ?bool
 | `Rejected`                    | `null` — **unknown**, fix the input or configuration                                      |
 | `NotRequested`                | throws `\LogicException` — you forgot to pass `Section::Insolvency`                        |
 
+ISIR is asked by IČO only. For a company that is complete: the court always records a company's IČO. A natural person
+with an IČO (a self-employed person) is recorded mainly under the name and birth number, and the court may leave the
+IČO out; ISIR then finds nothing by IČO although the person is in insolvency. So for a natural person `false` (and no
+`RiskFlag::Insolvency`) means "no proceeding recorded under this IČO", not "certainly not in insolvency". The legal
+form in `$profile->company` tells the two apart; to be sure about a natural person, check ISIR under the name or birth
+number yourself.
+
 Requesting a section whose client was not passed to the `CompanyLookup` constructor also throws `\LogicException`,
 before any request is made.
 
@@ -271,10 +278,12 @@ is asked once for all its members). 100 IČO with `Section::Vat` are 1 ARES and 
 batches of 100). VIES has no bulk call: `Section::Vies` makes one `check()` per distinct lookup DIČ (a VAT group is
 checked once for all its members), one after another, so 100 companies with `Vies` take minutes. ISIR has no bulk
 call either: `Section::Insolvency` makes one `find()` per company, one after another in ARES response order —
-typically 0.10–0.25 s each (100 companies ≈ 10–25 s). After a connection failure (timeout, refused or blocked
-connection, e.g. port 8443 closed by a firewall) no further ISIR request is sent in that call, and the remaining
-companies get `Insolvency` `Unavailable` with that same exception, so an unreachable ISIR costs one timeout. An ISIR
-error code or an HTTP error affects only its company.
+typically 0.10–0.25 s each (100 companies ≈ 10–25 s). After two connection failures in a row (timeout, refused or
+blocked connection, e.g. port 8443 closed by a firewall; `ServiceUnavailable::$connectionFailed`) to VIES or to ISIR,
+each counted on its own, no further request to that source is sent in that call, so an unreachable source costs two timeouts, not one per company; a single slow
+answer does not stop the call. Every company not yet asked gets that section `Unavailable` with its own
+`ServiceUnavailable` ("… was not sent after 2 connection failures in a row", `connectionFailed` true, the last
+failure as the previous exception). An answer, an error code or an HTTP error resets the count.
 
 ```php
 use IdSign\BusinessRegisters\CompanyId;
@@ -293,12 +302,12 @@ foreach ($profiles->missing($requested) as $id) {   // list<CompanyId> — not h
 
 The statuses mean the same as for one company. If the ADIS call fails (outage, invalid response), `Vat` is
 `Unavailable` for every profile asked in that call; a company whose lookup DIČ is not Czech is not sent to ADIS and
-gets `Rejected`. A VIES outage or rejection affects only the companies with that lookup DIČ, which share the
-stored exception. Once VIES rejects the requester (`INVALID_REQUESTER_INFO`), no further VIES request is sent in that
+gets `Rejected`. Apart from the stop after connection failures, a VIES outage or rejection affects only the companies
+with that lookup DIČ, which share the stored exception. Once VIES rejects the requester (`INVALID_REQUESTER_INFO`), no further VIES request is sent in that
 call: every company whose lookup DIČ was not yet checked gets `Rejected` with that same exception instance, whose
 message names the DIČ of the request that was rejected; a company whose lookup DIČ was already checked keeps that
-answer. The next call asks VIES again. An ISIR outage, invalid response or rejection affects only that company; the
-following companies are still asked. Every IČO and the section clients are checked before
+answer. The next call asks VIES again. Any other ISIR failure (an error code, an HTTP error, an invalid response)
+affects only that company. Every IČO and the section clients are checked before
 the first request; ARES errors are thrown.
 
 #### Change tracking
@@ -342,9 +351,11 @@ call throw `InvalidInput` before any request, and `missing()` / `get()` of the r
 ### Addresses
 
 ARES seats, ADIS addresses and ISIR debtor addresses share `Address` with one meaning per field: `street` is the street
-name (or the part of the municipality where there is none) with the numbers, "Duhová 1444/2"; `streetName`,
+name (or the part of the municipality where there is none; ISIR, which has no part of the municipality, the city)
+with the numbers, "Duhová 1444/2"; `streetName`,
 `houseNumber` and `orientationNumber` are its parts; `postalCode` is five digits without a space. ADIS and ISIR fill
-the parts only when their value splits unambiguously, otherwise the source value stays in `street`. Names stay as the
+the parts only when their value splits unambiguously, otherwise the source value stays in `street`. A number label
+("č.ev.3", "čp.153") sets `houseNumberType` (2 registration, 1 descriptive) and is left out of `street`, as in ARES. Names stay as the
 source writes them: ADIS uses upper case, ADIS and ISIR can put a city district into `city` ("PRAHA 4", "Praha 5"),
 where ARES has `city` "Praha" and `cityDistrict`, and ISIR `ulice` (`streetName`) is the village name where there are
 no streets ("Libotenice"), where ARES has `district`. VIES returns free text (`ViesResult::$address`).
@@ -554,7 +565,8 @@ Every exception implements `IdSign\BusinessRegisters\Exception\ExceptionInterfac
 | `ServiceUnavailable`                                 | the source could not answer: transport error, timeout, outage, overload | try again later; it is **never** a business answer such as "not a payer" |
 | `InvalidResponse`                                    | the source answered something the library cannot read                   | an error to investigate; report it                                       |
 
-`InvalidInput` has `?string $errorCode`; `ServiceUnavailable` has `Source $source` and `?string $errorCode`;
+`InvalidInput` has `?string $errorCode`; `ServiceUnavailable` has `Source $source`, `?string $errorCode` and
+`bool $connectionFailed` (the source was not reached: a transport error or timeout, not an error status or code);
 `InvalidResponse` has `Source $source`. `Source` is `Ares`, `Adis`, `Vies` or `Isir`. `CompanyLookup::byCompanyId()`
 throws only ARES errors; an exception from a section is recorded in the profile (`Unavailable` or `Rejected`, see
 [Five meanings of `null`](#five-meanings-of-null)).

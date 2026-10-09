@@ -31,10 +31,19 @@ The facade gains the insolvency register section, which reorders two constructor
 - The JSON form of a `CompanyProfile` has the new key `insolvencies` (`null` or the proceedings), and `flags()` can
   contain `RiskFlag::Insolvency`, placed right after `RiskFlag::InsolvencyRecord`.
 - `Section` has the new case `Section::Insolvency`. A `match` over all `Section` cases needs an arm for it.
+- `CompanyLookup::byCompanyIds()` with `Section::Vies` stops asking VIES after two connection failures in a row
+  (timeout, refused or blocked connection). The companies not yet checked get `Vies` `Unavailable` with their own
+  `ServiceUnavailable` (`connectionFailed` true) instead of each waiting for its own timeout. Retry them as any other
+  `Unavailable` section.
+- `CompanyProfile::flags()` and `hasFlag()` throw `\LogicException` for a profile whose `Vat` or `Insolvency` section
+  is `Ok` but holds no data, as `isVatPayer()` and `isInInsolvency()` do; they returned the flag as absent before.
+  Code that builds profiles in tests passes the subject or the proceedings with an `Ok` status.
 
 ADIS addresses follow the address format shared with ARES (README § Addresses):
 
 - `Address::$streetName`, `$houseNumber` and `$orientationNumber` are filled from the ADIS street line when it ends in
   house numbers ("Kobližná 70/4"); they were always `null` before.
+- A registration number (`č.ev.3`) sets `Address::$houseNumberType` to 2 and is left out of `$street`: "Pramenná č.ev.3"
+  becomes "Pramenná 3", as in ARES.
 - `Address::$street` of an address without a street name now starts with the part of the municipality, as in ARES:
   "LIBOTENICE 153" instead of "153". Stored ADIS addresses compared with fresh ones differ there.

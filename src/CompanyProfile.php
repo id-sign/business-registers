@@ -153,7 +153,9 @@ final readonly class CompanyProfile
     private function isRaised(RiskFlag $flag): bool
     {
         $registrations = $this->company->registrations;
-        $vat = SectionStatus::Ok === $this->status(Section::Vat) ? $this->vat : null;
+        // through the shortcuts, so a profile Ok without its data fails here as it does there
+        $vatAnswer = SectionStatus::Ok === $this->status(Section::Vat) ? $this->vatAnswer() : null;
+        $vat = $vatAnswer instanceof VatSubject ? $vatAnswer : null;
         $vies = SectionStatus::Ok === $this->status(Section::Vies) ? $this->vies : null;
 
         return match ($flag) {
@@ -163,7 +165,7 @@ final readonly class CompanyProfile
             // "Kov likvidaci" do not match.
             RiskFlag::InLiquidation => 1 === preg_match('/(?<![^\s"\'„“”‘’‚‛‟«»‹›´`,.()\/\p{Pd}])v\s+likvidaci(?![^\s"\'„“”‘’‚‛‟«»‹›´`,.()\/\p{Pd}])/iu', $this->company->name),
             RiskFlag::InsolvencyRecord => $registrations->isActive(AresRegister::Insolvency),
-            RiskFlag::Insolvency => SectionStatus::Ok === $this->status(Section::Insolvency) && true === $this->insolvencies?->hasOngoing(),
+            RiskFlag::Insolvency => SectionStatus::Ok === $this->status(Section::Insolvency) && true === $this->isInInsolvency(),
             RiskFlag::UnreliableVatPayer => null !== $vat && $vat->unreliable && $vat->isVatPayer(),
             RiskFlag::UnreliablePerson => SubjectType::UnreliablePerson === $vat?->type
                 || (null !== $vat && $vat->unreliable && SubjectType::IdentifiedPerson === $vat->type),

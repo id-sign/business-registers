@@ -14,7 +14,8 @@ src/
   Vies/        Vies (interface)  ViesClient  ViesResult  TraderDetails  MatchResult
   Isir/        InsolvencyRegister (interface)  InsolvencyClient  InsolvencyProceedings  InsolvencyProceeding
                Internal/ResponseParser
-  Internal/    HttpTransport  JsonReader  XmlReader  Dates  ListElement  Identifiers @internal, not public API
+  Internal/    HttpTransport  ConnectionGuard  JsonReader  XmlReader  Dates  Integers  StreetLine  ListElement
+               Identifiers @internal, not public API
 tests/         mirrors src/; Fixtures/{Ares,Adis,Vies,Isir}; Double/ (test helpers); Live/ (live suite)
 ```
 
@@ -54,12 +55,16 @@ consumers depend on the interface and use it for test doubles.
 - ARES fills every field from its structured address and composes `street`.
 - ARES composes `street` from the street name, else the part of the municipality, else the municipality.
 - ADIS sends the street line `uliceCislo`; its trailing numbers are split off, and a line without a street name
-  ("153") is completed with `castObce`, else `mesto` ("LIBOTENICE 153"). A name ending with a dot is a number label
-  ("č.p. 153") and is not split. ADIS writes names in upper case, and `city` can be a city district ("PRAHA 4").
+  ("153") is completed with `castObce`, else `mesto` ("LIBOTENICE 153"). ADIS copies street names from RÚIAN, dotted
+  abbreviations included ("Masarykovo nám. 292"), and writes a registration number as `č.ev.3`. A known label
+  (`č.ev.`, `ev.č.` → `houseNumberType` 2, `č.p.`, `čp.` → 1) is left out of the parts and of `street`, as ARES
+  writes "Pramenná 3"; a last word that looks like a label of an unknown spelling ("č.pop. 12", "čp 12") leaves the
+  line unsplit. ADIS writes `castObce` and `mesto` in upper case, and `city` can be a city district ("PRAHA 4").
 - ISIR sends `ulice` and `cisloPopisne` apart; `street` is composed from the two, `houseNumberType` is 1 for a `čp.`
-  prefix, the space in `psc` is removed. `ulice` is the village name where there are no streets ("Libotenice", where
-  ARES has `district`), and `city` can name a city district ("Praha 5").
-- Splitting accepts a trailing `123`, `123/4` or `123/4a` in ASCII digits (ISIR also `čp.123`); any other shape
+  prefix, the space in `psc` is removed. Without `ulice` the numbers follow `mesto` ("Litoměřice 153"); ISIR has no
+  part of the municipality. `ulice` is the village name where there are no streets ("Libotenice", where ARES has
+  `district`), and `city` can name a city district ("Praha 5").
+- Splitting accepts a trailing `123`, `123/4` or `123/4a` in ASCII digits, optionally after a known label; any other shape
   (e.g. ISIR `332E`) stays in `street` only, the parts `null`. Names are not re-cased and "Praha 4" is not split: both
   would be guesses.
 - VIES returns the address as free text per member state (`ViesResult::$address`), not as an `Address`.
@@ -88,7 +93,7 @@ consumers depend on the interface and use it for test doubles.
   `filtrAktualniRizeni=F` (the service's "current only" filter hides only some ended states, so the library asks for
   everything and decides "ongoing" itself in `InsolvencyProceeding::isOngoing()`) and `maxPocetVysledku=101`. The
   service caps distinct proceedings at that number and returns every debtor row of each, so a list cut at 101
-  proceedings always has more than 100 rows: more than 100 distinct proceedings (by `reference()`) is
+  proceedings always has more than 100 rows: more than 100 distinct proceedings (by court and `reference()`, which is unique per court only) is
   `InvalidResponse`, while a complete answer of up to 100 proceedings is accepted whatever its number of rows. The
   response order is undocumented. The request children are
   unqualified and their order is fixed by the XSD; another order is a SOAP Fault.
@@ -153,6 +158,8 @@ consumers depend on the interface and use it for test doubles.
   group (`isVatPayer()`); `UnreliablePerson` is type `UnreliablePerson` or `nespolehlivyPlatce` on an identified
   person. `VatRegistrationEnded` is ARES-derived and yields only to an `Ok` section `Vat` whose subject
   `isVatPayer()`.
+- `flags()` reads the `Vat` subject and `Insolvency` through the same private answers as `isVatPayer()` and
+  `isInInsolvency()`, so a hand-built profile with an `Ok` section but no data throws `\LogicException` in both.
 - A profile with stored exceptions is not guaranteed to be `serialize()`-able; consumers snapshot the DTOs.
 - `CompanyLookup::byCompanyIds($ids, Section ...$sections)` returns `CompanyProfiles` in the order of the `Companies`
   ARES returns; ids ARES does not hold are absent (`missing()`). Before any request it checks the section clients and
@@ -162,13 +169,16 @@ consumers depend on the interface and use it for test doubles.
   exception shared by the companies with that lookup id); after an `InvalidInput` with `errorCode`
   `INVALID_REQUESTER_INFO` no further `check()` is sent and the remaining lookup ids get that same exception.
   `Insolvency` is one `InsolvencyRegister::find()` per company, sequentially in `Companies` order, not memoised (ARES
-  de-duplicates the companies). After a connection failure (a `ServiceUnavailable` whose previous exception is a
-  `TransportExceptionInterface`: timeout, refused or blocked connection) no further `find()` is sent and the remaining
-  companies get that same exception, so an unreachable ISIR costs one timeout per call, not one per company. Any
-  other failure (an ISIR error code, an HTTP error, an `InvalidResponse`) affects only that company. The facade does
-  not chunk; the clients do.
+  de-duplicates the companies). The sequential sections each go through an `Internal/ConnectionGuard`: after two
+  `ServiceUnavailable` with `connectionFailed` in a row (set by `HttpTransport` on a transport error: timeout,
+  refused, blocked or broken connection) no further request to that source is sent, and every request not sent throws
+  its own `ServiceUnavailable` naming its id, `connectionFailed` true, the last failure as previous. An unreachable
+  source costs two timeouts per call, not one per company, and one slow answer does not stop the call. Any other
+  outcome (an answer, an error code, an HTTP error, an `InvalidResponse`, an `InvalidInput`) resets the count. The
+  flag, not the previous exception, marks the failure, so a consumer's own `InsolvencyRegister` or `Vies` can set it
+  too. The facade does not chunk; the clients do.
 - The statuses follow `byCompanyId()` through one shared per-company step: no id for the section → `NotApplicable`;
   absent from the ADIS answer → `NotFound`. The ADIS call's `ServiceUnavailable` / `InvalidResponse` makes `Vat`
   `Unavailable`, its `InvalidInput` makes it `Rejected`, for every profile in the call; a non-Czech lookup id is not
   sent and makes that profile's `Vat` `Rejected`. A VIES failure affects only the companies with that lookup id, except a requester
-  rejection, which stops VIES for the rest of the call. Only ARES exceptions propagate.
+  rejection, which stops VIES for the rest of the call, and the connection failures above. Only ARES exceptions propagate.

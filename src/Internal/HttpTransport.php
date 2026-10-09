@@ -126,6 +126,6 @@ final readonly class HttpTransport
 
     private function unavailable(TransportExceptionInterface $e, string $subject): ServiceUnavailable
     {
-        return new ServiceUnavailable(\sprintf('%s request for %s failed: %s', strtoupper($this->source->value), $subject, $e->getMessage()), $this->source, previous: $e);
+        return new ServiceUnavailable(\sprintf('%s request for %s failed: %s', strtoupper($this->source->value), $subject, $e->getMessage()), $this->source, previous: $e, connectionFailed: true);
     }
 }

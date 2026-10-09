@@ -7,7 +7,7 @@ All implement `Exception\ExceptionInterface`.
 | Exception            | Meaning                                                              | Carries                        |
 |----------------------|----------------------------------------------------------------------|--------------------------------|
 | `InvalidInput`       | caller error, or the source rejected the input; retrying won't help  | `?string $errorCode`           |
-| `ServiceUnavailable` | transport, timeout, unexpected HTTP status, outage, throttling, SOAP Fault — try later; never a business answer such as "not a payer" | `Source $source`, `?string $errorCode` |
+| `ServiceUnavailable` | transport, timeout, unexpected HTTP status, outage, throttling, SOAP Fault — try later; never a business answer such as "not a payer" | `Source $source`, `?string $errorCode`, `bool $connectionFailed` |
 | `InvalidResponse`    | the answer cannot be read: not JSON/XML, a missing mandatory value, a value outside a closed set — an error to investigate | `Source $source` |
 
 `$code` of `\Exception` is an `int` and stays `0`; source codes are strings, hence `errorCode`.

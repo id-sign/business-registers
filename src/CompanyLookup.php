@@ -12,13 +12,13 @@ use IdSign\BusinessRegisters\Ares\CompanyDirectory;
 use IdSign\BusinessRegisters\Exception\InvalidInput;
 use IdSign\BusinessRegisters\Exception\InvalidResponse;
 use IdSign\BusinessRegisters\Exception\ServiceUnavailable;
+use IdSign\BusinessRegisters\Internal\ConnectionGuard;
 use IdSign\BusinessRegisters\Internal\Identifiers;
 use IdSign\BusinessRegisters\Internal\ListElement;
 use IdSign\BusinessRegisters\Isir\InsolvencyProceedings;
 use IdSign\BusinessRegisters\Isir\InsolvencyRegister;
 use IdSign\BusinessRegisters\Vies\Vies;
 use IdSign\BusinessRegisters\Vies\ViesResult;
-use Symfony\Contracts\HttpClient\Exception\TransportExceptionInterface;
 
 /**
  * Assembles a company profile from ARES and the requested sections; an outage of a section source
@@ -29,6 +29,9 @@ use Symfony\Contracts\HttpClient\Exception\TransportExceptionInterface;
 final readonly class CompanyLookup
 {
     private const string REQUESTER_REJECTED = 'INVALID_REQUESTER_INFO';
+
+    /** Connection failures in a row after which a bulk call stops asking a sequential section. */
+    private const int CONNECTION_FAILURES_LIMIT = 2;
 
     /**
      * @param ?VatId $viesRequester own VAT id passed to VIES, so that it issues a consultation number
@@ -88,11 +91,12 @@ final readonly class CompanyLookup
      * affects only the companies with that lookup id.
      *
      * Section Insolvency is one find() per company, sequentially, in the order ARES returns them; typically
-     * 0.10–0.25 s per company (100 companies ≈ 10–25 s). After a connection failure (a ServiceUnavailable caused
-     * by a transport error: timeout, refused or blocked connection) no further find() is made in that call: every
-     * company not yet asked gets Insolvency Unavailable with that same exception instance, so an unreachable
-     * register costs one timeout, not one per company. Any other failure (an ISIR error code, an HTTP error, an
-     * invalid response) affects only that company.
+     * 0.10–0.25 s per company (100 companies ≈ 10–25 s). After two connection failures in a row from VIES or from
+     * ISIR (ServiceUnavailable::$connectionFailed: timeout, refused or blocked connection) no further request is sent
+     * to that source in that call: every company not yet asked gets that section Unavailable with its own
+     * ServiceUnavailable (connectionFailed, the last failure as previous), so an unreachable source costs two
+     * timeouts, not one per company. Any other failure (an error code, an HTTP error, an invalid response) affects
+     * only that company and resets the count.
      *
      * @param list<CompanyId|string> $ids
      *
@@ -148,7 +152,8 @@ final readonly class CompanyLookup
         $answers = [];
         /** @var ?InvalidInput $rejection */
         $rejection = null;
-        $checkVies = function (VatId $vatId) use (&$answers, &$rejection): ViesResult {
+        $viesGuard = new ConnectionGuard(Source::Vies, self::CONNECTION_FAILURES_LIMIT);
+        $checkVies = function (VatId $vatId) use (&$answers, &$rejection, $viesGuard): ViesResult {
             $key = (string) $vatId;
             if (!isset($answers[$key])) {
                 if (null !== $rejection) {
@@ -156,7 +161,7 @@ final readonly class CompanyLookup
                 }
 
                 try {
-                    $answers[$key] = $this->vies()->check($vatId, $this->viesRequester);
+                    $answers[$key] = $viesGuard->call(fn (): ViesResult => $this->vies()->check($vatId, $this->viesRequester), 'VAT id '.$key);
                 } catch (ServiceUnavailable|InvalidResponse|InvalidInput $e) {
                     $answers[$key] = $e;
                     if ($e instanceof InvalidInput && self::REQUESTER_REJECTED === $e->errorCode) {
@@ -173,23 +178,11 @@ final readonly class CompanyLookup
             return $answer;
         };
 
-        /** @var ?ServiceUnavailable $connectionFailure */
-        $connectionFailure = null;
-        $findInsolvencies = function (CompanyId $companyId) use (&$connectionFailure): InsolvencyProceedings {
-            if (null !== $connectionFailure) {
-                throw $connectionFailure;
-            }
-
-            try {
-                return $this->insolvencyRegister()->find($companyId);
-            } catch (ServiceUnavailable $e) {
-                if ($e->getPrevious() instanceof TransportExceptionInterface) {
-                    $connectionFailure = $e;
-                }
-
-                throw $e;
-            }
-        };
+        $isirGuard = new ConnectionGuard(Source::Isir, self::CONNECTION_FAILURES_LIMIT);
+        $findInsolvencies = fn (CompanyId $companyId): InsolvencyProceedings => $isirGuard->call(
+            fn (): InsolvencyProceedings => $this->insolvencyRegister()->find($companyId),
+            'company id '.$companyId,
+        );
 
         $profiles = [];
         foreach ($companies as $company) {
@@ -239,29 +232,12 @@ final readonly class CompanyLookup
         $statuses = [];
         $errors = [];
         foreach ($requested as $name => $section) {
-            // Without the id the section is queried under, its client is not asked.
-            $statuses[$name] = SectionStatus::NotApplicable;
             try {
-                switch ($section) {
-                    case Section::Vat:
-                        if (null !== $vatLookupId) {
-                            $vat = $findVat($vatLookupId);
-                            $statuses[$name] = null === $vat ? SectionStatus::NotFound : SectionStatus::Ok;
-                        }
-                        break;
-                    case Section::Vies:
-                        if (null !== $vatLookupId) {
-                            $vies = $checkVies($vatLookupId);
-                            $statuses[$name] = SectionStatus::Ok;
-                        }
-                        break;
-                    case Section::Insolvency:
-                        if (null !== $company->id) {
-                            $insolvencies = $findInsolvencies($company->id);
-                            $statuses[$name] = SectionStatus::Ok;
-                        }
-                        break;
-                }
+                $statuses[$name] = match ($section) {
+                    Section::Vat => self::ask($vatLookupId, $findVat, $vat),
+                    Section::Vies => self::ask($vatLookupId, $checkVies, $vies),
+                    Section::Insolvency => self::ask($company->id, $findInsolvencies, $insolvencies),
+                };
             } catch (ServiceUnavailable|InvalidResponse $e) {
                 $statuses[$name] = SectionStatus::Unavailable;
                 $errors[$name] = $e;
@@ -272,6 +248,30 @@ final readonly class CompanyLookup
         }
 
         return new CompanyProfile($company, $vat, $vies, $insolvencies, $statuses, $errors);
+    }
+
+    /**
+     * Asks one section under $id and stores the answer in $answer; without the id the section is queried under, its
+     * client is not asked and the section is NotApplicable.
+     *
+     * @template I of object
+     * @template T of object
+     *
+     * @param ?I              $id
+     * @param \Closure(I): ?T $lookup
+     * @param ?T              $answer
+     *
+     * @param-out ?T $answer
+     */
+    private static function ask(?object $id, \Closure $lookup, ?object &$answer): SectionStatus
+    {
+        if (null === $id) {
+            return SectionStatus::NotApplicable;
+        }
+
+        $answer = $lookup($id);
+
+        return null === $answer ? SectionStatus::NotFound : SectionStatus::Ok;
     }
 
     private function vatRegister(): VatRegister

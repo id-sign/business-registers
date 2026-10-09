@@ -171,10 +171,12 @@ final class ResponseParser
         }
 
         $parts = null === $numbers ? null : StreetLine::splitNumbers($numbers);
+        // without ulice the numbers follow the city, as ARES and ADIS put them after a place name
+        $place = $streetName ?? $city;
         // numbers of an unknown shape stay in the street line only, never in the split fields
         $street = null === $parts
-            ? (null === $numbers ? $streetName : trim(($streetName ?? '').' '.$numbers))
-            : StreetLine::compose($streetName, $parts['houseNumber'], $parts['orientationNumber']) ?? $numbers;
+            ? (null === $numbers ? $streetName : trim(($place ?? '').' '.$numbers))
+            : StreetLine::compose($place, $parts['houseNumber'], $parts['orientationNumber']) ?? $numbers;
 
         return new Address(
             street: $street,

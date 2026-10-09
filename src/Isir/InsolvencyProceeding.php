@@ -29,8 +29,9 @@ final readonly class InsolvencyProceeding
      * @param ?\DateTimeImmutable $bornOn                  ISIR datumNarozeni
      * @param ?string             $name                    ISIR nazevOsoby: surname of a natural person or name of a legal person
      * @param ?string             $addressKind             ISIR druhAdresy, observed "SÍDLO FY", "SÍDLO ORG.", "TRVALÁ"
-     * @param ?string             $stateCode               ISIR druhStavKonkursu, observed NEVYRIZENA, ÚPADEK, KONKURS, REORGANIZ,
-     *                                                     ODDLUŽENÍ, PRAVOMOCNA, ODSKRTNUTA, VYRIZENA; any other value may appear
+     * @param ?string             $stateCode               ISIR druhStavKonkursu, observed NEVYRIZENA, MORATORIUM, ÚPADEK,
+     *                                                     KONKURS, REORGANIZ, ODDLUŽENÍ, ZRUŠENO VS, OBZIVLA, PRAVOMOCNA,
+     *                                                     ODSKRTNUTA, VYRIZENA, MYLNÝ ZÁP.; any other value may appear
      * @param ?string             $detailUrl               ISIR urlDetailRizeni, the public detail page of the proceeding
      * @param bool                $otherDebtorInProceeding ISIR dalsiDluznikVRizeni as received; its meaning is undocumented and
      *                                                     varies by query, so it is no reliable "has co-debtors" answer

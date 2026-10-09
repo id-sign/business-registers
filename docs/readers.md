@@ -46,8 +46,10 @@ trip, because the cast saturates; it returns `null` and the reader adds the key 
 
 The street-line rule of `Address` (`docs/architecture.md` § Address): `compose($name, $houseNumber, $orientationNumber)`
 writes "Duhová 1444/2"; `splitNumbers()` reads an ISIR house-number field (`123`, `123/4`, `123/4a`, `čp.123`) and
-`splitLine()` an ADIS street line with trailing numbers (`Kobližná 70/4`, `153`) unless the name ends with a dot (a
-number label such as `č.p.`). Digits are ASCII only. Any other shape is `null`.
+`splitLine()` an ADIS street line with trailing numbers (`Kobližná 70/4`, `Masarykovo nám. 292`, `153`). Both accept a
+known label right before the numbers (`č.p.`, `čp.` → type 1, `č.ev.`, `ev.č.` → type 2) and return it as
+`houseNumberType`; `splitLine()` returns `null` when the last word of the name looks like a label of an unknown
+spelling (`č.pop.`, `čís.`, `čp`). Digits are ASCII only. Any other shape is `null`.
 
 ## ListElement
 

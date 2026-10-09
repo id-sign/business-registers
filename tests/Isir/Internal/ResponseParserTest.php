@@ -457,6 +457,29 @@ final class ResponseParserTest extends TestCase
         self::assertNull($address->orientationNumber);
     }
 
+    public function testNumbersWithoutAStreetNameFollowTheCity(): void
+    {
+        $address = ResponseParser::parseProceedings(self::changed('lidru-00121100-konkurs-no-dates.xml', '<ulice>Libotenice</ulice>', ''))
+            ->proceedings[0]->address;
+
+        self::assertNotNull($address);
+        self::assertSame('Litoměřice 153', $address->street);
+        self::assertNull($address->streetName);
+        self::assertSame('153', $address->houseNumber);
+        self::assertSame(1, $address->houseNumberType);
+    }
+
+    public function testNumbersOfAnUnknownShapeWithoutAStreetNameFollowTheCity(): void
+    {
+        $xml = self::changed('lidru-00121100-konkurs-no-dates.xml', '<ulice>Libotenice</ulice><cisloPopisne>čp.153<', '<cisloPopisne>332E<');
+
+        $address = ResponseParser::parseProceedings($xml)->proceedings[0]->address;
+
+        self::assertNotNull($address);
+        self::assertSame('Litoměřice 332E', $address->street);
+        self::assertNull($address->houseNumber);
+    }
+
     public function testCompanyIdTheLibraryCannotReadIsInvalidResponseWithItsPath(): void
     {
         $xml = self::changed('sberbank-25083325-konkurs-ongoing.xml', '<ic>25083325</ic>', '<ic>SENTINEL</ic>');

@@ -15,6 +15,12 @@ final class StreetLine
 {
     private const string NUMBERS = '([0-9]+)(?:\/([0-9]+[a-zA-Z]?))?';
 
+    /** Number labels of a known meaning: "č.p." / "čp." descriptive (type 1), "č.ev." / "ev.č." registration (type 2). */
+    private const string LABEL = '(č\.\s*p\.|čp\.|č\.\s*ev\.|ev\.\s*č\.)';
+
+    /** A last word that looks like a number label of an unknown spelling ("č.pop.", "čís.", "čp"). */
+    private const string LABEL_LIKE = '/(?:^|\s)(?:č|čp|čís|ev)(?:\.\S*)?$/Diu';
+
     private function __construct()
     {
     }
@@ -34,39 +40,52 @@ final class StreetLine
     }
 
     /**
-     * Splits a house-number field such as ISIR cisloPopisne: "921/2", "153" or "čp.153" (descriptive number, type 1).
+     * Splits a house-number field such as ISIR cisloPopisne: "921/2", "153", or with a known label "čp.153".
      *
      * @return ?array{houseNumber: string, orientationNumber: ?string, houseNumberType: ?int}
      */
     public static function splitNumbers(string $value): ?array
     {
-        if (1 !== preg_match('/^(čp\.\s*)?'.self::NUMBERS.'$/Du', $value, $m)) {
+        if (1 !== preg_match('/^(?:'.self::LABEL.'\s*)?'.self::NUMBERS.'$/Diu', $value, $m)) {
             return null;
         }
 
         return [
             'houseNumber' => $m[2],
             'orientationNumber' => '' === ($m[3] ?? '') ? null : $m[3],
-            'houseNumberType' => '' === $m[1] ? null : 1,
+            'houseNumberType' => self::type($m[1]),
         ];
     }
 
     /**
-     * Splits a whole street line such as ADIS uliceCislo: "Kobližná 70/4", or "153" without a street name. A name
-     * ending with a dot is a number label ("č.p.", "ev.č.") whose meaning is not known, so such a line is not split.
+     * Splits a whole street line such as ADIS uliceCislo: "Kobližná 70/4", "Masarykovo nám. 292", "Pramenná č.ev.3",
+     * or "153" without a street name. A known label sets the house-number type and is left out of the parts; a last
+     * word that looks like a label of an unknown spelling ("č.pop. 12") leaves the line unsplit.
      *
-     * @return ?array{streetName: ?string, houseNumber: string, orientationNumber: ?string}
+     * @return ?array{streetName: ?string, houseNumber: string, orientationNumber: ?string, houseNumberType: ?int}
      */
     public static function splitLine(string $line): ?array
     {
-        if (1 !== preg_match('/^(?:(.*\S)\s+)?'.self::NUMBERS.'$/Du', $line, $m) || str_ends_with($m[1], '.')) {
+        // the lazy, optional name lets a label directly before the numbers be read as the label, not as part of the name
+        if (1 !== preg_match('/^(?:(.*?\S)\s+)??(?:'.self::LABEL.'\s*)?'.self::NUMBERS.'$/Diu', $line, $m)
+            || 1 === preg_match(self::LABEL_LIKE, $m[1])) {
             return null;
         }
 
         return [
             'streetName' => '' === $m[1] ? null : $m[1],
-            'houseNumber' => $m[2],
-            'orientationNumber' => '' === ($m[3] ?? '') ? null : $m[3],
+            'houseNumber' => $m[3],
+            'orientationNumber' => '' === ($m[4] ?? '') ? null : $m[4],
+            'houseNumberType' => self::type($m[2]),
         ];
+    }
+
+    private static function type(string $label): ?int
+    {
+        if ('' === $label) {
+            return null;
+        }
+
+        return str_contains(mb_strtolower($label), 'ev') ? 2 : 1;
     }
 }

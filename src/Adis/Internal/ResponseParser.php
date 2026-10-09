@@ -182,6 +182,7 @@ final class ResponseParser
             street: $street,
             streetName: $parts['streetName'] ?? null,
             houseNumber: $parts['houseNumber'] ?? null,
+            houseNumberType: $parts['houseNumberType'] ?? null,
             orientationNumber: $parts['orientationNumber'] ?? null,
             district: $district,
             city: $city,

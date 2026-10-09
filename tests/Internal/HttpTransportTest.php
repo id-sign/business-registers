@@ -128,6 +128,7 @@ final class HttpTransportTest extends TestCase
         } catch (ServiceUnavailable $e) {
             self::assertSame($source, $e->source);
             self::assertNotNull($e->getPrevious());
+            self::assertTrue($e->connectionFailed);
             self::assertStringContainsString($label.' request for IČO 45274649 failed', $e->getMessage());
 
             return;
@@ -170,6 +171,7 @@ final class HttpTransportTest extends TestCase
         } catch (ServiceUnavailable $e) {
             self::assertSame(Source::Adis, $e->source);
             self::assertSame($failure, $e->getPrevious());
+            self::assertTrue($e->connectionFailed);
 
             return;
         }
@@ -184,9 +186,15 @@ final class HttpTransportTest extends TestCase
         })(), ['http_code' => 200]);
         $transport = new HttpTransport(new MockHttpClient($silent), Source::Ares, 0.1);
 
-        $this->expectException(ServiceUnavailable::class);
+        try {
+            $transport->exchange('GET', 'https://example.test/', [], 'IČO 45274649');
+        } catch (ServiceUnavailable $e) {
+            self::assertTrue($e->connectionFailed);
 
-        $transport->exchange('GET', 'https://example.test/', [], 'IČO 45274649');
+            return;
+        }
+
+        self::fail('Expected ServiceUnavailable was not thrown.');
     }
 
     // --- sendInWaves ---

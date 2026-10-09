@@ -33,10 +33,9 @@ lower `maxConcurrency`. In Symfony register the clients and bind each interface 
 ## Facade or single client
 
 - Facade `CompanyLookup`: a profile for one IČO (ARES plus optional ADIS, VIES and ISIR sections, risk flags), or
-  `byCompanyIds()` for a list (1 ARES + 1 ADIS request per 100 IČO; VIES one `check()` per distinct lookup DIČ,
-  sequential, a requester rejection stops VIES for the rest of the call: 100 companies with `Vies` take minutes; ISIR
-  one `find()` per company, sequential, 0.10–0.25 s each; a connection failure stops ISIR for the rest). Use it for
-  "everything about these companies" with tolerance to an outage.
+  `byCompanyIds()` (1 ARES + 1 ADIS request per 100 IČO; VIES one sequential `check()` per distinct lookup DIČ,
+  100 take minutes, a requester rejection stops VIES; ISIR one sequential `find()` per company, 0.10–0.25 s each;
+  2 connection failures in a row stop VIES or ISIR, each company not asked gets its own `ServiceUnavailable`).
 - Single client: bulk checks (`findMany`), search, the list of unreliable payers, a bank account check without ARES, VIES
   for a foreign VAT id.
 
@@ -172,7 +171,8 @@ Address: text, street, streetName, houseNumber, houseNumberType, orientationNumb
 | `Rejected` | `null` = unknown; retrying is useless, fix input/config |
 | `NotRequested` | `\LogicException` (pass `Section::Vat`) |
 
-`isInInsolvency()` likewise, except `NotApplicable` (no IČO) -> `null`: ISIR can list a person by birth number only.
+`isInInsolvency()` likewise, except `NotApplicable` (no IČO) -> `null`. ISIR is asked by IČO only and lists a person
+by birth number, IČO optional: for a natural person `false` means "nothing under this IČO", not certainty.
 
 **ARES is a pointer, not an answer.**
 - A filled `vatId` is no proof of a payer; ADIS decides (`isVatPayer()`). ARES `Vat = Active` includes identified persons.
@@ -225,7 +225,7 @@ way to verify a Spanish trader.
 | Exception | Meaning | Do |
 |---|---|---|
 | `InvalidInput` (`?string $errorCode`) | bad input or rejected by source | fix input / tell user; retrying is useless |
-| `ServiceUnavailable` (`Source $source`, `?string $errorCode`) | could not answer: transport, timeout, outage, overload | retry later. NEVER "not a payer" / "invalid" |
+| `ServiceUnavailable` (`Source $source`, `?string $errorCode`, `bool $connectionFailed`: not reached) | could not answer: transport, timeout, outage, overload | retry later. NEVER "not a payer" / "invalid" |
 | `InvalidResponse` (`Source $source`) | unreadable answer | investigate and report; message has key path and type only |
 
 - Branch on `$e->errorCode` / `$e->source`, never parse messages. When `errorCode` is a token (`[A-Za-z0-9_.:-]{1,64}`)
