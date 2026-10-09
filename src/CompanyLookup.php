@@ -91,7 +91,7 @@ final readonly class CompanyLookup
      * affects only the companies with that lookup id.
      *
      * Section Insolvency is one find() per company, sequentially, in the order ARES returns them; typically
-     * 0.10–0.25 s per company (100 companies ≈ 10–25 s). After two connection failures in a row from VIES or from
+     * 0.03–0.25 s per company (100 companies ≈ 3–25 s). After two connection failures in a row from VIES or from
      * ISIR (ServiceUnavailable::$connectionFailed: timeout, refused or blocked connection) no further request is sent
      * to that source in that call: every company not yet asked gets that section Unavailable with its own
      * ServiceUnavailable (connectionFailed, the last failure as previous), so an unreachable source costs two

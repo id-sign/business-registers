@@ -277,17 +277,18 @@ $lookup = new CompanyLookup($ares, $vatRegister, $vies, $isir, viesRequester: Va
 #### Many companies at once
 
 `CompanyLookup::byCompanyIds()` builds the profiles of a list of IČO with as few requests as possible: ARES is asked
-with one `findMany()`, section `Vat` with one ADIS `findMany()` over the companies' `vatLookupId()` values (a VAT group
-is asked once for all its members). 100 IČO with `Section::Vat` are 1 ARES and 1 ADIS request (both clients send
+with one `findMany()`, section `Vat` with one ADIS `findMany()` over the companies' `vatLookupId()` values (a VAT
+group is asked once for all its members). 100 IČO with `Section::Vat` are 1 ARES and 1 ADIS request (both clients send
 batches of 100). VIES has no bulk call: `Section::Vies` makes one `check()` per distinct lookup DIČ (a VAT group is
-checked once for all its members), one after another, so 100 companies with `Vies` take minutes. ISIR has no bulk
-call either: `Section::Insolvency` makes one `find()` per company, one after another in ARES response order —
-typically 0.10–0.25 s each (100 companies ≈ 10–25 s). After two connection failures in a row (timeout, refused or
-blocked connection, e.g. port 8443 closed by a firewall; `ServiceUnavailable::$connectionFailed`) to VIES or to ISIR,
-each counted on its own, no further request to that source is sent in that call, so an unreachable source costs two timeouts, not one per company; a single slow
-answer does not stop the call. Every company not yet asked gets that section `Unavailable` with its own
-`ServiceUnavailable` ("… was not sent after 2 connection failures in a row", `connectionFailed` true, the last
-failure as the previous exception). An answer, an error code or an HTTP error resets the count.
+checked once for all its members), one after another, 1.3–2 s each, so 100 companies with `Vies` take about 3 minutes.
+ISIR has no bulk call either: `Section::Insolvency` makes one `find()` per company, one after another in ARES response
+order — typically 0.03–0.25 s each (100 companies ≈ 3–25 s). After two connection failures in a row (timeout, refused
+or blocked connection, e.g. port 8443 closed by a firewall; `ServiceUnavailable::$connectionFailed`) to VIES or to
+ISIR, each counted on its own, no further request to that source is sent in that call, so an unreachable source costs
+two timeouts, not one per company; a single slow answer does not stop the call. Every company not yet asked gets that
+section `Unavailable` with its own `ServiceUnavailable` ("… was not sent after 2 connection failures in a row",
+`connectionFailed` true, the last failure as the previous exception). An answer, an error code or an HTTP error resets
+the count.
 
 ```php
 use IdSign\BusinessRegisters\CompanyId;
@@ -555,8 +556,8 @@ foreach ($proceedings as $proceeding) {          // also $proceedings->proceedin
   birth date, name and address of natural persons. Your application is the controller of that personal data.
 - `synchronisedAt` is the register's own freshness hint, read as Prague local time (verified in summer time only); the
   register omits it for an empty result, and an unreadable value is `null`. It is never part of a verdict.
-- The service listens on port 8443 (`https://isir.justice.cz:8443/...`); allow it in your egress firewall. One `find()`
-  is one request, 0.1–0.25 s observed.
+- The service listens on port 8443 (`https://isir.justice.cz:8443/...`); allow it in your egress firewall. Each lookup
+  is one request, 0.03–0.25 s observed.
 - `find()` returns at most 100 proceedings (a proceeding can have several rows). A subject with more than 100 listed
   proceedings throws `InvalidResponse` rather than returning an incomplete list that might leave out an ongoing one.
 
@@ -690,7 +691,11 @@ lists.
 - ADIS is unavailable every night from 0:00 to 0:10 (`ServiceUnavailable`, `errorCode` `2`).
 - VIES and the member states throttle concurrent requests (`MS_MAX_CONCURRENT_REQ`, `GLOBAL_MAX_CONCURRENT_REQ`);
   treat these as `ServiceUnavailable` and retry later. Some member states do not disclose name and address.
-- ISIR has no bulk query: one `find()` is one request, 0.1–0.25 s observed.
+- ISIR has no bulk query: each lookup (`find()`, `findByBirthNumber()`, `findByNameAndBirthDate()`) is one request.
+- Response times observed for one company (October 2026, connection already open): ARES ≈ 0.05 s, ADIS ≈ 0.1 s,
+  ISIR ≈ 0.03 s, VIES 1.3–2 s. A `byCompanyId()` with all three sections takes ≈ 1.8 s, about 90 % of it VIES; request
+  `Section::Vies` only when you need the EU validity, and the profile takes ≈ 0.25 s. The first request to each host
+  also opens the connection (0.1–0.25 s), which under PHP-FPM happens again in every process.
 - Default timeout 10 s per request (idle and total), including the time a request waits queued at the source.
 
 The operators publish terms of use. The library is stateless and does not enforce them; a breach can get your IP
