@@ -253,11 +253,22 @@ final class InsolvencyClientTest extends TestCase
     public function testFindByNameAndBirthDateSendsTheCalendarDateOfTheGivenTimeZone(): void
     {
         $response = self::emptyAnswer();
-        $bornOn = new \DateTimeImmutable('1980-01-01 00:30', new \DateTimeZone('Europe/Prague'));
+        // already 1980-01-02 in UTC and in Prague
+        $bornOn = new \DateTimeImmutable('1980-01-01 20:00', new \DateTimeZone('America/New_York'));
 
         new InsolvencyClient(new MockHttpClient($response))->findByNameAndBirthDate('Nováková', 'Jana', $bornOn);
 
         self::assertSame('1980-01-01', (string) self::requestChildren($response)[2]);
+    }
+
+    public function testFindByNameAndBirthDateStripsUnicodeWhiteSpaceAroundTheNames(): void
+    {
+        $response = self::emptyAnswer();
+
+        new InsolvencyClient(new MockHttpClient($response))->findByNameAndBirthDate("\u{FEFF}Nováková\u{A0}", "\u{200B} Jana\u{2003}", new \DateTimeImmutable('1980-01-01'));
+
+        $children = self::requestChildren($response);
+        self::assertSame(['Nováková', 'Jana'], [(string) $children[0], (string) $children[1]]);
     }
 
     /**
@@ -374,6 +385,47 @@ final class InsolvencyClientTest extends TestCase
         }
 
         self::fail('Expected InvalidResponse was not thrown.');
+    }
+
+    /**
+     * @return iterable<string, array{\Closure(InsolvencyRegister): mixed, string}> lookup, answer fixture
+     */
+    public static function provideLookupsOfAPersonWithTheirAnswers(): iterable
+    {
+        yield 'birth number' => [static fn (InsolvencyRegister $r): mixed => $r->findByBirthNumber('000000/0000'), 'by-birth-number-relevance1.xml'];
+        yield 'name and birth date' => [static fn (InsolvencyRegister $r): mixed => $r->findByNameAndBirthDate('Nováková', 'Jana', new \DateTimeImmutable('1980-01-01')), 'by-name-relevance4.xml'];
+    }
+
+    /**
+     * The match kind cannot be checked without it, so the rows may belong to another person.
+     *
+     * @param \Closure(InsolvencyRegister): mixed $lookup
+     */
+    #[DataProvider('provideLookupsOfAPersonWithTheirAnswers')]
+    public function testAnswerToAPersonLookupWithoutARelevanceIsInvalidResponse(\Closure $lookup, string $fixture): void
+    {
+        $body = preg_replace('~<relevanceVysledku>\d+</relevanceVysledku>~', '', FixtureLoader::read('Isir/'.$fixture));
+        self::assertIsString($body);
+        $client = new InsolvencyClient(new MockHttpClient(new MockResponse($body)));
+
+        try {
+            $lookup($client);
+        } catch (InvalidResponse $e) {
+            self::assertStringContainsString('stav/relevanceVysledku', $e->getMessage());
+
+            return;
+        }
+
+        self::fail('Expected InvalidResponse was not thrown.');
+    }
+
+    public function testFindDoesNotReadTheRelevance(): void
+    {
+        $body = str_replace('<relevanceVysledku>6</relevanceVysledku>', '<relevanceVysledku>x</relevanceVysledku>', FixtureLoader::read('Isir/relevance-above-requested.xml'));
+
+        $proceedings = new InsolvencyClient(new MockHttpClient(new MockResponse($body)))->find('25083325');
+
+        self::assertCount(1, $proceedings);
     }
 
     public function testFindAcceptsAnAnswerOfAnyRelevance(): void
@@ -761,6 +813,54 @@ final class InsolvencyClientTest extends TestCase
         }
 
         self::fail('Expected InvalidInput was not thrown.');
+    }
+
+    /**
+     * Stack traces carry call arguments unless zend.exception_ignore_args is on, which stock php:* images leave off.
+     *
+     * @param \Closure(InsolvencyRegister): mixed $lookup
+     */
+    #[DataProvider('provideLookupsOfAPerson')]
+    public function testFailureOfAPersonLookupKeepsPersonalDataOutOfTheStackTrace(\Closure $lookup, string $subject): void
+    {
+        self::assertNotSame('', $subject);
+        $previous = ini_set('zend.exception_ignore_args', '0');
+        $client = new InsolvencyClient(new MockHttpClient([new MockResponse('SENTINEL-BODY 999999/9999', ['http_code' => 200])]));
+
+        try {
+            $lookup($client);
+        } catch (InvalidResponse $e) {
+            self::assertNoPersonalData(implode("\n", self::stringArguments($e->getTrace())));
+
+            return;
+        } finally {
+            ini_set('zend.exception_ignore_args', false === $previous ? '1' : $previous);
+        }
+
+        self::fail('Expected InvalidResponse was not thrown.');
+    }
+
+    /**
+     * Strings among the call arguments of a stack trace, nested arrays included; objects are skipped, because the
+     * personal data reaches the calls as strings and arrays.
+     *
+     * @return list<string>
+     */
+    private static function stringArguments(mixed $value): array
+    {
+        if (\is_string($value)) {
+            return [$value];
+        }
+        if (!\is_array($value)) {
+            return [];
+        }
+
+        $strings = [];
+        foreach ($value as $item) {
+            array_push($strings, ...self::stringArguments($item));
+        }
+
+        return $strings;
     }
 
     private static function assertNoPersonalData(string $message): void

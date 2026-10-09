@@ -47,7 +47,7 @@ final class ResponseParser
      * @throws InvalidResponse
      * @throws ServiceUnavailable
      */
-    public static function parseProceedings(string $xml, ?int $maxRelevance = null): InsolvencyProceedings
+    public static function parseProceedings(#[\SensitiveParameter] string $xml, ?int $maxRelevance = null): InsolvencyProceedings
     {
         $body = XmlReader::fromString($xml, Source::Isir, self::NAMESPACES)->element('s:Body');
 
@@ -72,8 +72,7 @@ final class ResponseParser
             };
         }
 
-        $relevance = $status->optionalInt('relevanceVysledku');
-        if (null !== $maxRelevance && null !== $relevance && $relevance > $maxRelevance) {
+        if (null !== $maxRelevance && $status->int('relevanceVysledku') > $maxRelevance) {
             throw $status->invalid('relevanceVysledku', 'a relevance of at most '.$maxRelevance);
         }
 
@@ -107,7 +106,7 @@ final class ResponseParser
     /**
      * The `faultcode` of a SOAP Fault body, or null when the body is not a readable Fault carrying one.
      */
-    public static function faultCode(string $xml): ?string
+    public static function faultCode(#[\SensitiveParameter] string $xml): ?string
     {
         try {
             return XmlReader::fromString($xml, Source::Isir, self::NAMESPACES)

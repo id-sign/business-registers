@@ -35,7 +35,7 @@ final readonly class HttpTransport
      *
      * @throws ServiceUnavailable
      */
-    public function send(string $method, string $url, array $options, string $subject): ResponseInterface
+    public function send(string $method, string $url, #[\SensitiveParameter] array $options, string $subject): ResponseInterface
     {
         $options['timeout'] = $this->timeout;
         $options['max_duration'] = $this->timeout;
@@ -70,7 +70,7 @@ final readonly class HttpTransport
      *
      * @throws ServiceUnavailable
      */
-    public function exchange(string $method, string $url, array $options, string $subject): array
+    public function exchange(string $method, string $url, #[\SensitiveParameter] array $options, string $subject): array
     {
         return $this->read($this->send($method, $url, $options, $subject), $subject);
     }

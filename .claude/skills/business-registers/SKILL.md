@@ -113,7 +113,7 @@ check(VatId|string $vatId, VatId|string|null $requester = null, ?Vies\TraderDeta
 find(CompanyId|string $id): Isir\InsolvencyProceedings   // empty = not on the list NOW (§ 425 removes after 5 years)
 findByBirthNumber(string $birthNumber): Isir\InsolvencyProceedings  // ^\d{6}/?\d{3,4}$ after trim, else InvalidInput
 findByNameAndBirthDate(string $surname, string $firstName, \DateTimeImmutable $bornOn): Isir\InsolvencyProceedings
-// exact, case-insensitive match only, name as on the ID document (other spelling or prefix = empty); no name-only lookup
+// exact, case-insensitive match only, name as on the ID document, in NFC (other spelling, prefix or NFD = empty); no name-only lookup
 // name without a letter, not valid UTF-8 or with a character XML 1.0 forbids, birth year outside 1–9999 = InvalidInput
 // InsolvencyProceedings (readonly, IteratorAggregate, Countable): proceedings (list), synchronisedAt (?DateTimeImmutable,
 // Prague local time, freshness hint only; absent on an empty result), ongoing(): list<…>, hasOngoing(): bool

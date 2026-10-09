@@ -32,19 +32,19 @@ interface InsolvencyRegister
      *
      * @throws InvalidInput       blank or malformed birth number (before any request)
      * @throws ServiceUnavailable transport, timeout, HTTP ≠ 200, SOAP Fault, service error codes WS4/SQL1/SERVER1
-     * @throws InvalidResponse    unreadable or truncated answer, unknown error code, a weaker match than requested
+     * @throws InvalidResponse    unreadable or truncated answer, unknown error code, a weaker or missing match kind
      */
     public function findByBirthNumber(string $birthNumber): InsolvencyProceedings;
 
     /**
      * Every proceeding the register lists for the natural person matching surname, first name and birth date, as
-     * find(); names match exactly, ignoring case, so a name spelled otherwise than in the register gives an empty
-     * collection.
+     * find(); names match exactly, ignoring case, so a name spelled otherwise than in the register, or not in Unicode
+     * NFC, gives an empty collection. White space around the names is ignored.
      *
      * @throws InvalidInput       surname or first name without a letter, not valid UTF-8 or with a character XML
      *                            1.0 forbids, a birth year outside 1–9999 (before any request)
      * @throws ServiceUnavailable transport, timeout, HTTP ≠ 200, SOAP Fault, service error codes WS4/SQL1/SERVER1
-     * @throws InvalidResponse    unreadable or truncated answer, unknown error code, a weaker match than requested
+     * @throws InvalidResponse    unreadable or truncated answer, unknown error code, a weaker or missing match kind
      */
     public function findByNameAndBirthDate(string $surname, string $firstName, \DateTimeImmutable $bornOn): InsolvencyProceedings;
 }

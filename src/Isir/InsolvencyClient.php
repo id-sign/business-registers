@@ -66,7 +66,7 @@ final readonly class InsolvencyClient implements InsolvencyRegister
         return $this->lookup(['ic' => $id->value], null, 'company id '.$id);
     }
 
-    public function findByBirthNumber(string $birthNumber): InsolvencyProceedings
+    public function findByBirthNumber(#[\SensitiveParameter] string $birthNumber): InsolvencyProceedings
     {
         $birthNumber = trim($birthNumber);
         if (1 !== preg_match(self::BIRTH_NUMBER_FORMAT, $birthNumber)) {
@@ -76,10 +76,13 @@ final readonly class InsolvencyClient implements InsolvencyRegister
         return $this->lookup(['rc' => $birthNumber], self::RELEVANCE_BIRTH_NUMBER, 'a birth number');
     }
 
-    public function findByNameAndBirthDate(string $surname, string $firstName, \DateTimeImmutable $bornOn): InsolvencyProceedings
-    {
-        $surname = trim($surname);
-        $firstName = trim($firstName);
+    public function findByNameAndBirthDate(
+        #[\SensitiveParameter] string $surname,
+        #[\SensitiveParameter] string $firstName,
+        #[\SensitiveParameter] \DateTimeImmutable $bornOn,
+    ): InsolvencyProceedings {
+        $surname = self::trimName($surname);
+        $firstName = self::trimName($firstName);
         if (1 !== preg_match(self::NAME_FORMAT, $surname) || 1 !== preg_match(self::NAME_FORMAT, $firstName)) {
             throw new InvalidInput('Surname and first name must be UTF-8 text with a letter and without characters XML 1.0 forbids.');
         }
@@ -96,6 +99,15 @@ final readonly class InsolvencyClient implements InsolvencyRegister
     }
 
     /**
+     * Strips Unicode white space, zero-width spaces and byte order marks at both ends, which trim() leaves on; invalid
+     * UTF-8 becomes '' and fails NAME_FORMAT.
+     */
+    private static function trimName(string $name): string
+    {
+        return preg_replace('~^[\s\x{200B}\x{FEFF}]+|[\s\x{200B}\x{FEFF}]+$~uD', '', $name) ?? '';
+    }
+
+    /**
      * @param non-empty-array<string, string> $criteria     search elements in the order the service requires
      * @param ?int                            $maxRelevance weakest match kind the answer may report, null for any
      * @param string                          $subject      what the request is for in exception messages, never
@@ -104,7 +116,7 @@ final readonly class InsolvencyClient implements InsolvencyRegister
      * @throws ServiceUnavailable
      * @throws InvalidResponse
      */
-    private function lookup(array $criteria, ?int $maxRelevance, string $subject): InsolvencyProceedings
+    private function lookup(#[\SensitiveParameter] array $criteria, ?int $maxRelevance, string $subject): InsolvencyProceedings
     {
         [$status, $content] = $this->transport->exchange('POST', $this->endpoint, self::options(self::request($criteria, $maxRelevance)), $subject);
 
@@ -118,7 +130,7 @@ final readonly class InsolvencyClient implements InsolvencyRegister
     /**
      * @return array<string, mixed>
      */
-    private static function options(string $envelope): array
+    private static function options(#[\SensitiveParameter] string $envelope): array
     {
         return [
             'headers' => [
@@ -134,7 +146,7 @@ final readonly class InsolvencyClient implements InsolvencyRegister
      *
      * @param non-empty-array<string, string> $criteria
      */
-    private static function request(array $criteria, ?int $maxRelevance): string
+    private static function request(#[\SensitiveParameter] array $criteria, ?int $maxRelevance): string
     {
         $elements = $criteria + [
             'maxPocetVysledku' => (string) (ResponseParser::MAX_PROCEEDINGS + 1),

@@ -572,13 +572,15 @@ $isir->findByNameAndBirthDate('Nováková', 'Jana', new \DateTimeImmutable('1980
   ignored); anything else is `InvalidInput` before any request. The check digit is not verified: an unknown number
   gives an empty collection.
 - `findByNameAndBirthDate()` sends the calendar date of `$bornOn` in its own time zone. Surname and first name must
-  match the register exactly, ignoring letter case, so pass them as on the identity document; a different spelling
-  (diacritics, a double surname) or a shortened name gives an empty collection. A surname or first name without a
-  letter, a name that is not valid UTF-8 or holds a character XML 1.0 forbids, or a birth year outside 1–9999 is
-  `InvalidInput` before any request.
-- Both ask the service for that match only; an answer reporting a weaker match (`relevanceVysledku`) is
-  `InvalidResponse`, never another person's proceedings. There is no lookup by name alone.
-- Exception messages name "a birth number" or "a person", never the birth number, name or date.
+  match the register exactly, ignoring letter case, so pass them as on the identity document and in Unicode NFC
+  (composed diacritics: a decomposed "á", as macOS file names or PDF copies hold it, finds nobody); white space around
+  them, no-break and zero-width spaces included, is ignored. A different spelling (diacritics, a double surname) or a
+  shortened name gives an empty collection. A surname or first name without a letter, a name that is not valid UTF-8
+  or holds a character XML 1.0 forbids, or a birth year outside 1–9999 is `InvalidInput` before any request.
+- Both ask the service for that match only; an answer reporting a weaker match, or no match kind at all
+  (`relevanceVysledku`), is `InvalidResponse`, never another person's proceedings. There is no lookup by name alone.
+- Exception messages name "a birth number" or "a person", never the birth number, name or date. The parameters that
+  carry them are `#[\SensitiveParameter]`, so stack traces leave them out too.
 
 ## Error handling
 
@@ -639,7 +641,7 @@ Per source:
 | ISIR   | empty result (`WS2`)                                                                                                                | `find()` returns an empty collection                                                                                                             |
 | ISIR   | `WS4` (data not current), `SQL1`, `SERVER1`, SOAP Fault, HTTP ≠ 200, transport error, timeout                                       | `ServiceUnavailable`, `errorCode` = the ISIR code or the SOAP `faultcode` (also with HTTP ≠ 200); otherwise `null`                               |
 | ISIR   | `WS1`, `WS3`, unknown code, truncated answer (`pocetVysledku` above the rows returned), more than 100 proceedings                   | `InvalidResponse`, `errorCode` = the ISIR code for `WS1`, `WS3` and an unknown code; otherwise `null`                                            |
-| ISIR   | a weaker match (`relevanceVysledku`) than `findByBirthNumber()` or `findByNameAndBirthDate()` asked for                             | `InvalidResponse`, `errorCode` `null`                                                                                                            |
+| ISIR   | a weaker or missing match kind (`relevanceVysledku`) for `findByBirthNumber()` or `findByNameAndBirthDate()`                       | `InvalidResponse`, `errorCode` `null`                                                                                                            |
 | VIES   | `INVALID_INPUT`, `INVALID_REQUESTER_INFO`, HTTP 400                                                                                 | `InvalidInput`, `errorCode` = VIES code                                                                                                          |
 | VIES   | every other code (`MS_UNAVAILABLE`, `TIMEOUT`, `*_MAX_CONCURRENT_REQ*`, `VAT_BLOCKED`, `IP_BLOCKED`, unknown codes), other statuses | `ServiceUnavailable`, `errorCode` = VIES code when the body is readable                                                                          |
 | any    | element of the wrong type in an id list, a duplicate in a collection constructor                                                    | `InvalidInput`                                                                                                                                   |

@@ -38,7 +38,7 @@ final readonly class XmlReader
      *
      * @throws InvalidResponse when the body is not well-formed XML
      */
-    public static function fromString(string $xml, Source $source, array $namespaces): self
+    public static function fromString(#[\SensitiveParameter] string $xml, Source $source, array $namespaces): self
     {
         $previous = libxml_use_internal_errors(true);
 
