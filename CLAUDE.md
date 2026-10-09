@@ -1,19 +1,18 @@
 # business-registers
 
 Typed, stateless PHP library for Czech business registers: ARES (`Ares\`), the VAT register ADIS (`Adis\`), VIES
-(`Vies\`) and the facade `CompanyLookup` / `CompanyProfile`. Namespace `IdSign\BusinessRegisters`, Composer package
-`id-sign/business-registers`. A plain library, not a Symfony bundle. PHP 8.4+, `ext-dom`; at runtime only the
-interfaces of `symfony/http-client-contracts`.
+(`Vies\`), the insolvency register ISIR (`Isir\`) and the facade `CompanyLookup` / `CompanyProfile`. Namespace
+`IdSign\BusinessRegisters`, Composer package `id-sign/business-registers`. A plain library, not a Symfony bundle.
+PHP 8.4+, `ext-dom`; at runtime only the interfaces of `symfony/http-client-contracts`.
 
-Not implemented (do not document as available): register extracts, the insolvency register (ISIR), ARES code lists,
-the ARES change feed.
+Not implemented (do not document as available): register extracts, ARES code lists, the ARES change feed.
 
 ## Commands
 
 ```bash
 composer check       # cs (dry run) + phpstan + unit suite — must pass before every commit
 composer test        # unit suite, offline
-composer test:live   # live suite against production ARES, ADIS, VIES
+composer test:live   # live suite against production ARES, ADIS, VIES, ISIR
 composer cs:fix      # apply code style
 make test-matrix     # unit suite in Docker on PHP 8.4 and 8.5
 ```

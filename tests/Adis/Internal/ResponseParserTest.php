@@ -98,14 +98,73 @@ final class ResponseParserTest extends TestCase
         self::assertSame('ČEZ, A. S.', $subject->name);
         self::assertNotNull($subject->address);
         self::assertSame('Duhová 1444/2', $subject->address->street);
+        self::assertSame('Duhová', $subject->address->streetName);
+        self::assertSame('1444', $subject->address->houseNumber);
+        self::assertSame('2', $subject->address->orientationNumber);
+        self::assertNull($subject->address->houseNumberType);
         self::assertSame('MICHLE (PRAHA 4)', $subject->address->district);
         self::assertSame('PRAHA 4', $subject->address->city);
         self::assertSame('14000', $subject->address->postalCode);
         self::assertSame('Česká republika', $subject->address->countryName);
         self::assertNull($subject->address->text);
-        self::assertNull($subject->address->streetName);
-        self::assertNull($subject->address->houseNumber);
         self::assertNull($subject->address->countryCode);
+    }
+
+    public function testStreetLineWithoutAStreetNameStartsWithThePartOfTheMunicipality(): void
+    {
+        $address = self::parseFixture('status-mixed.xml')[1]->address;
+
+        self::assertNotNull($address);
+        self::assertSame('LIBOTENICE 153', $address->street);
+        self::assertNull($address->streetName);
+        self::assertSame('153', $address->houseNumber);
+        self::assertNull($address->orientationNumber);
+    }
+
+    public function testStreetNameAbbreviatedWithADotIsSplit(): void
+    {
+        $xml = str_replace('<uliceCislo>Duhová 1444/2<', '<uliceCislo>Masarykovo nám. 292<', FixtureLoader::read('Adis/status-mixed.xml'));
+        $address = ResponseParser::parseSubjects($xml)[0]->address;
+
+        self::assertNotNull($address);
+        self::assertSame('Masarykovo nám. 292', $address->street);
+        self::assertSame('Masarykovo nám.', $address->streetName);
+        self::assertSame('292', $address->houseNumber);
+        self::assertNull($address->houseNumberType);
+    }
+
+    public function testRegistrationNumberLabelSetsTheTypeAndIsLeftOutOfTheStreetLine(): void
+    {
+        $xml = str_replace('<uliceCislo>Duhová 1444/2<', '<uliceCislo>Pramenná č.ev.3<', FixtureLoader::read('Adis/status-mixed.xml'));
+        $address = ResponseParser::parseSubjects($xml)[0]->address;
+
+        self::assertNotNull($address);
+        self::assertSame('Pramenná 3', $address->street);
+        self::assertSame('Pramenná', $address->streetName);
+        self::assertSame('3', $address->houseNumber);
+        self::assertSame(2, $address->houseNumberType);
+    }
+
+    public function testRegistrationNumberWithoutAStreetNameStartsWithThePartOfTheMunicipality(): void
+    {
+        $xml = str_replace('<uliceCislo>153<', '<uliceCislo>č.ev.92<', FixtureLoader::read('Adis/status-mixed.xml'));
+        $address = ResponseParser::parseSubjects($xml)[1]->address;
+
+        self::assertNotNull($address);
+        self::assertSame('LIBOTENICE 92', $address->street);
+        self::assertNull($address->streetName);
+        self::assertSame(2, $address->houseNumberType);
+    }
+
+    public function testStreetLineWithoutAHouseNumberStaysInTheStreetLineOnly(): void
+    {
+        $xml = str_replace('<uliceCislo>Duhová 1444/2<', '<uliceCislo>Náměstí Míru<', FixtureLoader::read('Adis/status-mixed.xml'));
+        $address = ResponseParser::parseSubjects($xml)[0]->address;
+
+        self::assertNotNull($address);
+        self::assertSame('Náměstí Míru', $address->street);
+        self::assertNull($address->streetName);
+        self::assertNull($address->houseNumber);
     }
 
     public function testCheckedAtIsTheDateTheResponseWasGenerated(): void

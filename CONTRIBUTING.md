@@ -39,5 +39,5 @@ issue first, so that the design can be agreed before you write code.
 | [docs/release.md](docs/release.md)                 | versioning and `UPGRADE.md`                                    |
 | [docs/spec-deviations.md](docs/spec-deviations.md) | decisions that differ from the original design specification   |
 
-The live suite (`composer test:live`) sends real requests to ARES, ADIS and VIES. Run it only when your change touches
-a client, and mind the operators' limits listed in the README.
+The live suite (`composer test:live`) sends real requests to ARES, ADIS, VIES and ISIR. Run it only when your change
+touches a client, and mind the operators' limits listed in the README.

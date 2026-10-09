@@ -7,17 +7,17 @@ All implement `Exception\ExceptionInterface`.
 | Exception            | Meaning                                                              | Carries                        |
 |----------------------|----------------------------------------------------------------------|--------------------------------|
 | `InvalidInput`       | caller error, or the source rejected the input; retrying won't help  | `?string $errorCode`           |
-| `ServiceUnavailable` | transport, timeout, unexpected HTTP status, outage, throttling, SOAP Fault — try later; never a business answer such as "not a payer" | `Source $source`, `?string $errorCode` |
+| `ServiceUnavailable` | transport, timeout, unexpected HTTP status, outage, throttling, SOAP Fault — try later; never a business answer such as "not a payer" | `Source $source`, `?string $errorCode`, `bool $connectionFailed` |
 | `InvalidResponse`    | the answer cannot be read: not JSON/XML, a missing mandatory value, a value outside a closed set — an error to investigate | `Source $source` |
 
 `$code` of `\Exception` is an `int` and stays `0`; source codes are strings, hence `errorCode`.
 
 ## Message rules
 
-- **No response text in any message**: not ARES `popis`, ADIS `statusText`, SOAP `faultstring`, VIES `message`, nor
-  any value read from a response (responses carry names and birth dates; messages end up in logs). Allowed: the
-  caller's input id, the HTTP status, a fixed description, and for a transport failure the message of the HTTP
-  client's transport exception (`Internal/HttpTransport`).
+- **No response text in any message**: not ARES `popis`, ADIS `statusText`, ISIR `textChyby` / `popisChyby`, SOAP
+  `faultstring`, VIES `message`, nor any value read from a response (responses carry names, birth numbers and birth
+  dates; messages end up in logs). Allowed: the caller's input id, the HTTP status, a fixed description, and for a
+  transport failure the message of the HTTP client's transport exception (`Internal/HttpTransport`).
 - **Error codes are appended by the exception, never by hand.** `InvalidInput` and `ServiceUnavailable` append
   ` (error code X)` when `errorCode` is set and matches `/^[A-Za-z0-9_.:-]{1,64}$/D`; otherwise the message stays
   the plain description. `errorCode` always keeps the raw value. The regex exists in both classes; change both
@@ -33,8 +33,9 @@ All implement `Exception\ExceptionInterface`.
 ## Key paths
 
 - JSON (ARES, VIES): jq-style, dot-separated, 0-based list indices — `zaznamy[0].sidlo.psc`.
-- XML (ADIS): XPath-style, `/`-separated, 1-based positions, `@` for attributes, names with the registered prefix —
-  `s:Body/r:StatusNespolehlivySubjektRozsirenyResponse/r:statusSubjektu[3]/@typSubjektu`.
+- XML (ADIS, ISIR): XPath-style, `/`-separated, 1-based positions, `@` for attributes, names with the registered
+  prefix — `s:Body/r:StatusNespolehlivySubjektRozsirenyResponse/r:statusSubjektu[3]/@typSubjektu`; elements without a
+  namespace have no prefix — `s:Body/ns2:getIsirWsCuzkDataResponse/data[2]/cisloSenatu`.
 
 ## Mapping per source
 
@@ -43,6 +44,19 @@ All implement `Exception\ExceptionInterface`.
 - **ADIS:** HTTP ≠ 200 → `ServiceUnavailable`, code = `faultcode` when the body is a SOAP Fault (read leniently),
   else `null`; SOAP Fault with HTTP 200 → the same; `statusCode` 2 (maintenance) and 3 (unavailable) →
   `ServiceUnavailable` with the code; 1 or unknown → `InvalidResponse`; `NENALEZEN` → `null` / absent.
+- **ISIR:** HTTP ≠ 200 → `ServiceUnavailable` (`ISIR returned HTTP {status} for company id {id}`), code = `faultcode`
+  when the body is a SOAP Fault (read leniently), else `null`; SOAP Fault with HTTP 200 → `ServiceUnavailable`, code =
+  `faultcode`. `stav` is mandatory. No `kodChyby` → the `data` rows, `pocetVysledku` mandatory; a count above the
+  number of rows is a truncated answer → `InvalidResponse` at `…/stav/pocetVysledku` (a lower count is accepted).
+  The service caps distinct proceedings at `maxPocetVysledku` and returns every debtor row of each, so the client asks
+  for 101: a list cut at 101 proceedings always has more than 100 `data` rows. More than 100 distinct proceedings is
+  an incomplete list → `InvalidResponse` at `…/data`; up to 100 proceedings is a complete answer whatever the rows.
+  `WS2` → empty collection. `WS4`, `SQL1`, `SERVER1` → `ServiceUnavailable` with the code and a fixed description
+  (`ISIR data are not current`, `ISIR database error`, `ISIR application error`). `WS1`, `WS3` and any other code →
+  `InvalidResponse` at `…/stav/kodChyby` (impossible for a valid id); the code is read before anything else in `stav`.
+  `cisloSenatu`, `druhVec`, `bcVec`, `rocnik` are mandatory per row; `dalsiDluznikVRizeni` outside `T` / `F`, an `ic`
+  that is not up to 8 digits or an unreadable date → `InvalidResponse` with the key path. `casSynchronizace` is a
+  freshness hint and read leniently: an unreadable value is `synchronisedAt = null`, never an exception.
 - **VIES:** an error arrives with HTTP 200 and `actionSucceed: false` / `errorWrappers` — it is never read as
   `valid: false`. `INVALID_INPUT`, `INVALID_REQUESTER_INFO` → `InvalidInput`; any other code → `ServiceUnavailable`;
   HTTP 400 → `InvalidInput`; other non-200 → `ServiceUnavailable`; both with the first `errorWrappers[0].error` read

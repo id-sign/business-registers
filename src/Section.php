@@ -14,4 +14,7 @@ enum Section
 
     /** EU VAT id validation (VIES), queried under Company::vatLookupId(). */
     case Vies;
+
+    /** Insolvency register (ISIR), queried under Company::$id. */
+    case Insolvency;
 }

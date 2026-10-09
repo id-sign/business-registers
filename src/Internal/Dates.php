@@ -62,4 +62,25 @@ final class Dates
 
         return $dateTime->setTimezone($utc);
     }
+
+    /**
+     * ISO 8601 date and time read as Europe/Prague local time; the fraction and any zone suffix are ignored
+     * (ISIR suffixes Prague local time with "Z").
+     */
+    public static function dateTimePrague(string $value): ?\DateTimeImmutable
+    {
+        if (1 !== preg_match(self::DATE_TIME_PATTERN, $value)) {
+            return null;
+        }
+
+        $local = substr($value, 0, 10).'T'.substr($value, 11, 8);
+        $dateTime = \DateTimeImmutable::createFromFormat('!Y-m-d\TH:i:s', $local, new \DateTimeZone('Europe/Prague'));
+
+        // createFromFormat() silently overflows values such as 2026-02-30 and reports it only as a warning
+        if (false === $dateTime || false !== \DateTimeImmutable::getLastErrors()) {
+            return null;
+        }
+
+        return $dateTime;
+    }
 }

@@ -33,6 +33,12 @@ enum RiskFlag
     /** ARES Insolvency is Active: the subject has a record in the insolvency register, possibly a closed one. */
     case InsolvencyRecord;
 
+    /**
+     * An Ok section Insolvency lists at least one proceeding that InsolvencyProceeding::isOngoing() reports as ongoing,
+     * a filed petition included.
+     */
+    case Insolvency;
+
     /** The VAT register marks a VAT payer or VAT group as unreliable (nespolehlivyPlatce): an unreliable VAT payer. */
     case UnreliableVatPayer;
 

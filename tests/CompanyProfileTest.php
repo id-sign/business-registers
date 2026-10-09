@@ -12,11 +12,14 @@ use IdSign\BusinessRegisters\Ares\AresRegister;
 use IdSign\BusinessRegisters\Ares\Company;
 use IdSign\BusinessRegisters\Ares\Internal\CompanyMapper;
 use IdSign\BusinessRegisters\Ares\RegistrationStatus;
+use IdSign\BusinessRegisters\CompanyId;
 use IdSign\BusinessRegisters\CompanyProfile;
 use IdSign\BusinessRegisters\Exception\ExceptionInterface;
 use IdSign\BusinessRegisters\Exception\InvalidInput;
 use IdSign\BusinessRegisters\Exception\ServiceUnavailable;
 use IdSign\BusinessRegisters\Internal\JsonReader;
+use IdSign\BusinessRegisters\Isir\InsolvencyProceeding;
+use IdSign\BusinessRegisters\Isir\InsolvencyProceedings;
 use IdSign\BusinessRegisters\RiskFlag;
 use IdSign\BusinessRegisters\Section;
 use IdSign\BusinessRegisters\SectionStatus;
@@ -42,6 +45,7 @@ final class CompanyProfileTest extends TestCase
         ?Company $company = null,
         ?VatSubject $vat = null,
         ?ViesResult $vies = null,
+        ?InsolvencyProceedings $insolvencies = null,
         array $statuses = [],
         array $errors = [],
     ): CompanyProfile {
@@ -49,6 +53,7 @@ final class CompanyProfileTest extends TestCase
             company: $company ?? CompanyFactory::create(),
             vat: $vat,
             vies: $vies,
+            insolvencies: $insolvencies,
             statuses: $statuses,
             errors: $errors,
         );
@@ -105,6 +110,57 @@ final class CompanyProfileTest extends TestCase
         return new ServiceUnavailable('ADIS is down', Source::Adis);
     }
 
+    private static function proceeding(int $caseNumber, ?string $stateCode, ?\DateTimeImmutable $endedOn = null): InsolvencyProceeding
+    {
+        return new InsolvencyProceeding(
+            companyId: CompanyId::fromRegister('45274649'),
+            birthNumber: null,
+            senate: 95,
+            caseType: 'INS',
+            caseNumber: $caseNumber,
+            year: 2022,
+            court: null,
+            bornOn: null,
+            titleBefore: null,
+            titleAfter: null,
+            firstName: null,
+            name: null,
+            addressKind: null,
+            address: null,
+            stateCode: $stateCode,
+            detailUrl: null,
+            otherDebtorInProceeding: false,
+            insolvencyDeclaredOn: null,
+            endedOn: $endedOn,
+        );
+    }
+
+    private static function ongoingProceeding(int $caseNumber = 12575): InsolvencyProceeding
+    {
+        return self::proceeding($caseNumber, 'KONKURS');
+    }
+
+    private static function endedProceeding(int $caseNumber = 7001): InsolvencyProceeding
+    {
+        return self::proceeding($caseNumber, 'ODSKRTNUTA', new \DateTimeImmutable('2022-07-01'));
+    }
+
+    private static function insolvencies(InsolvencyProceeding ...$proceedings): InsolvencyProceedings
+    {
+        return new InsolvencyProceedings(
+            array_values($proceedings),
+            new \DateTimeImmutable('2026-10-08 09:26:35', new \DateTimeZone('Europe/Prague')),
+        );
+    }
+
+    /**
+     * @return array<string, SectionStatus>
+     */
+    private static function insolvencyOk(): array
+    {
+        return [Section::Insolvency->name => SectionStatus::Ok];
+    }
+
     /**
      * @return array<string, SectionStatus>
      */
@@ -115,7 +171,7 @@ final class CompanyProfileTest extends TestCase
 
     public function testSectionAndStatusEnumsHaveExactlyTheM1Cases(): void
     {
-        self::assertSame(['Vat', 'Vies'], self::caseNames(Section::class));
+        self::assertSame(['Vat', 'Vies', 'Insolvency'], self::caseNames(Section::class));
         self::assertSame(
             ['NotRequested', 'Ok', 'NotFound', 'NotApplicable', 'Unavailable', 'Rejected'],
             self::caseNames(SectionStatus::class),
@@ -125,6 +181,7 @@ final class CompanyProfileTest extends TestCase
                 'Ceased',
                 'InLiquidation',
                 'InsolvencyRecord',
+                'Insolvency',
                 'UnreliableVatPayer',
                 'UnreliablePerson',
                 'VatRegistrationEnded',
@@ -599,6 +656,122 @@ final class CompanyProfileTest extends TestCase
         self::assertFalse($profile->hasFlag(RiskFlag::ViesInvalid));
     }
 
+    public function testInsolvencyFlagIsRaisedForAnOkSectionWithAnOngoingProceeding(): void
+    {
+        $profile = self::profile(insolvencies: self::insolvencies(self::ongoingProceeding()), statuses: self::insolvencyOk());
+
+        self::assertSame([RiskFlag::Insolvency], $profile->flags());
+        self::assertTrue($profile->hasFlag(RiskFlag::Insolvency));
+    }
+
+    public function testInsolvencyFlagIsRaisedForAFiledPetitionThatIsNotYetDecided(): void
+    {
+        $profile = self::profile(
+            insolvencies: self::insolvencies(self::proceeding(12575, 'NEVYRIZENA')),
+            statuses: self::insolvencyOk(),
+        );
+
+        self::assertTrue($profile->hasFlag(RiskFlag::Insolvency));
+    }
+
+    public function testInsolvencyFlagIsRaisedForAProceedingWithoutAKnownState(): void
+    {
+        $profile = self::profile(
+            insolvencies: self::insolvencies(self::proceeding(12575, null)),
+            statuses: self::insolvencyOk(),
+        );
+
+        self::assertTrue($profile->hasFlag(RiskFlag::Insolvency));
+    }
+
+    public function testInsolvencyFlagIsRaisedWhenOnlyOneOfSeveralProceedingsIsOngoing(): void
+    {
+        $profile = self::profile(
+            insolvencies: self::insolvencies(self::endedProceeding(), self::ongoingProceeding()),
+            statuses: self::insolvencyOk(),
+        );
+
+        self::assertTrue($profile->hasFlag(RiskFlag::Insolvency));
+    }
+
+    /**
+     * @return iterable<string, array{list<InsolvencyProceeding>}>
+     */
+    public static function provideProceedingsThatAreNotOngoing(): iterable
+    {
+        yield 'no proceeding' => [[]];
+        yield 'one ended proceeding' => [[self::endedProceeding()]];
+        yield 'several ended proceedings' => [[self::endedProceeding(), self::endedProceeding(7002)]];
+        yield 'ended by state only' => [[self::proceeding(7003, 'PRAVOMOCNA')]];
+        yield 'ended by date only' => [[self::proceeding(7004, 'ÚPADEK', new \DateTimeImmutable('2022-07-01'))]];
+    }
+
+    /**
+     * @param list<InsolvencyProceeding> $proceedings
+     */
+    #[DataProvider('provideProceedingsThatAreNotOngoing')]
+    public function testInsolvencyFlagIsNotRaisedWhenNoProceedingIsOngoing(array $proceedings): void
+    {
+        $profile = self::profile(insolvencies: self::insolvencies(...$proceedings), statuses: self::insolvencyOk());
+
+        self::assertFalse($profile->hasFlag(RiskFlag::Insolvency));
+        self::assertSame([], $profile->flags());
+    }
+
+    #[DataProvider('provideStatusesOfSectionsThatAreNotOk')]
+    public function testInsolvencyFlagIsNotRaisedFromASectionThatIsNotOk(SectionStatus $status): void
+    {
+        $profile = self::profile(
+            insolvencies: self::insolvencies(self::ongoingProceeding()),
+            statuses: [Section::Insolvency->name => $status],
+        );
+
+        self::assertFalse($profile->hasFlag(RiskFlag::Insolvency));
+        self::assertSame([], $profile->flags());
+    }
+
+    public function testInsolvencyFlagDoesNotFollowTheAresInsolvencyRecord(): void
+    {
+        $company = CompanyFactory::create(statuses: [AresRegister::Insolvency->value => RegistrationStatus::Active]);
+        $profile = self::profile(
+            $company,
+            insolvencies: self::insolvencies(self::endedProceeding()),
+            statuses: self::insolvencyOk(),
+        );
+
+        self::assertSame([RiskFlag::InsolvencyRecord], $profile->flags());
+    }
+
+    public function testInsolvencyRecordFlagDoesNotFollowTheOngoingProceedings(): void
+    {
+        $profile = self::profile(
+            insolvencies: self::insolvencies(self::ongoingProceeding()),
+            statuses: self::insolvencyOk(),
+        );
+
+        self::assertFalse($profile->hasFlag(RiskFlag::InsolvencyRecord));
+        self::assertSame([RiskFlag::Insolvency], $profile->flags());
+    }
+
+    public function testInsolvencyFlagIsListedRightAfterTheInsolvencyRecordFlag(): void
+    {
+        $company = CompanyFactory::create(
+            ceasedOn: new \DateTimeImmutable('2020-01-31'),
+            statuses: [AresRegister::Insolvency->value => RegistrationStatus::Active],
+        );
+        $profile = self::profile(
+            $company,
+            vies: self::viesResult(false),
+            insolvencies: self::insolvencies(self::ongoingProceeding()),
+            statuses: [Section::Vies->name => SectionStatus::Ok, Section::Insolvency->name => SectionStatus::Ok],
+        );
+
+        self::assertSame(
+            [RiskFlag::Ceased, RiskFlag::InsolvencyRecord, RiskFlag::Insolvency, RiskFlag::ViesInvalid],
+            $profile->flags(),
+        );
+    }
+
     /**
      * @return iterable<string, array{SectionStatus}>
      */
@@ -812,5 +985,164 @@ final class CompanyProfileTest extends TestCase
         $profile = self::profile(vat: self::subject(SubjectType::VatPayer, [$ended]), statuses: self::vatOk());
 
         self::assertFalse($profile->hasPublishedAccount('71504011/0100'));
+    }
+
+    /**
+     * @return iterable<string, array{list<InsolvencyProceeding>, bool}>
+     */
+    public static function provideProceedingsWithTheShortcutAnswer(): iterable
+    {
+        yield 'an ongoing proceeding' => [[self::ongoingProceeding()], true];
+        yield 'an ongoing and an ended proceeding' => [[self::endedProceeding(), self::ongoingProceeding()], true];
+        yield 'a filed petition' => [[self::proceeding(12575, 'NEVYRIZENA')], true];
+        yield 'an ended proceeding only' => [[self::endedProceeding()], false];
+        yield 'no proceeding' => [[], false];
+    }
+
+    /**
+     * @param list<InsolvencyProceeding> $proceedings
+     */
+    #[DataProvider('provideProceedingsWithTheShortcutAnswer')]
+    public function testIsInInsolvencyFollowsTheOngoingProceedingsOfAnOkSection(array $proceedings, bool $expected): void
+    {
+        $profile = self::profile(insolvencies: self::insolvencies(...$proceedings), statuses: self::insolvencyOk());
+
+        self::assertSame($expected, $profile->isInInsolvency());
+    }
+
+    /**
+     * @return iterable<string, array{SectionStatus}>
+     */
+    public static function provideInsolvencyStatusesWithADefinitiveNegative(): iterable
+    {
+        yield 'not found' => [SectionStatus::NotFound];
+    }
+
+    #[DataProvider('provideInsolvencyStatusesWithADefinitiveNegative')]
+    public function testIsInInsolvencyIsDefinitelyFalseWhenTheSectionHoldsNoAnswer(SectionStatus $status): void
+    {
+        $profile = self::profile(statuses: [Section::Insolvency->name => $status]);
+
+        self::assertFalse($profile->isInInsolvency());
+    }
+
+    public function testIsInInsolvencyIsUnknownWhenTheSubjectHasNoCompanyIdToAskUnder(): void
+    {
+        $profile = self::profile(statuses: [Section::Insolvency->name => SectionStatus::NotApplicable]);
+
+        self::assertNull($profile->isInInsolvency());
+        self::assertFalse($profile->isComplete());
+    }
+
+    public function testVatSectionNotApplicableKeepsTheProfileComplete(): void
+    {
+        $profile = self::profile(statuses: [Section::Vat->name => SectionStatus::NotApplicable]);
+
+        self::assertTrue($profile->isComplete());
+    }
+
+    public function testIsInInsolvencyIsUnknownWhenTheSectionIsUnavailable(): void
+    {
+        $profile = self::profile(
+            statuses: [Section::Insolvency->name => SectionStatus::Unavailable],
+            errors: [Section::Insolvency->name => new ServiceUnavailable('ISIR is down', Source::Isir)],
+        );
+
+        self::assertNull($profile->isInInsolvency());
+    }
+
+    public function testIsInInsolvencyIsUnknownWhenTheSectionIsRejected(): void
+    {
+        $profile = self::profile(
+            statuses: [Section::Insolvency->name => SectionStatus::Rejected],
+            errors: [Section::Insolvency->name => new InvalidInput('Invalid company id')],
+        );
+
+        self::assertNull($profile->isInInsolvency());
+    }
+
+    public function testIsInInsolvencyThrowsWhenTheInsolvencySectionWasNotRequested(): void
+    {
+        $this->expectException(\LogicException::class);
+
+        self::profile()->isInInsolvency();
+    }
+
+    public function testIsInInsolvencyThrowsWhenOnlyOtherSectionsWereRequested(): void
+    {
+        $this->expectException(\LogicException::class);
+
+        self::profile(statuses: self::vatOk())->isInInsolvency();
+    }
+
+    public function testIsInInsolvencyThrowsForAnOkSectionWithoutACollection(): void
+    {
+        $this->expectException(\LogicException::class);
+
+        self::profile(statuses: self::insolvencyOk())->isInInsolvency();
+    }
+
+    /**
+     * @return iterable<string, array{array<string, SectionStatus>, RiskFlag}>
+     */
+    public static function provideOkSectionsWithoutData(): iterable
+    {
+        yield 'insolvency' => [[Section::Insolvency->name => SectionStatus::Ok], RiskFlag::Insolvency];
+        yield 'vat' => [[Section::Vat->name => SectionStatus::Ok], RiskFlag::UnreliableVatPayer];
+    }
+
+    /**
+     * @param array<string, SectionStatus> $statuses
+     */
+    #[DataProvider('provideOkSectionsWithoutData')]
+    public function testFlagsThrowForAnOkSectionWithoutDataLikeTheShortcuts(array $statuses, RiskFlag $flag): void
+    {
+        $profile = self::profile(statuses: $statuses);
+
+        foreach ([static fn (): array => $profile->flags(), static fn (): bool => $profile->hasFlag($flag)] as $call) {
+            try {
+                $call();
+                self::fail('Expected LogicException');
+            } catch (\LogicException $e) {
+                self::assertStringContainsString('is Ok but the profile holds no', $e->getMessage());
+            }
+        }
+    }
+
+    public function testProfileWithAnInsolvencySectionIsJsonEncodableWithEveryProceedingAndTheSynchronisationTime(): void
+    {
+        $profile = self::profile(
+            insolvencies: self::insolvencies(self::ongoingProceeding(12575), self::endedProceeding(7001)),
+            statuses: self::insolvencyOk(),
+        );
+
+        $data = json_decode(json_encode($profile, \JSON_THROW_ON_ERROR), true, flags: \JSON_THROW_ON_ERROR);
+
+        self::assertSame(12575, self::jsonAt($data, 'insolvencies', 'proceedings', 0, 'caseNumber'));
+        self::assertSame(7001, self::jsonAt($data, 'insolvencies', 'proceedings', 1, 'caseNumber'));
+        self::assertSame('45274649', self::jsonAt($data, 'insolvencies', 'proceedings', 0, 'companyId', 'value'));
+        self::assertSame('2026-10-08 09:26:35.000000', self::jsonAt($data, 'insolvencies', 'synchronisedAt', 'date'));
+        self::assertSame('Europe/Prague', self::jsonAt($data, 'insolvencies', 'synchronisedAt', 'timezone'));
+        self::assertSame('ok', self::jsonAt($data, 'statuses', 'Insolvency'));
+    }
+
+    public function testProfileWithoutAnInsolvencySectionEncodesItAsNull(): void
+    {
+        $data = json_decode(json_encode(self::profile(), \JSON_THROW_ON_ERROR), true, flags: \JSON_THROW_ON_ERROR);
+
+        self::assertNull(self::jsonAt($data, 'insolvencies'));
+    }
+
+    private static function jsonAt(mixed $data, string|int ...$path): mixed
+    {
+        foreach ($path as $key) {
+            if (!\is_array($data) || !\array_key_exists($key, $data)) {
+                self::fail(\sprintf('The encoded profile has no key %s.', implode('/', array_map(strval(...), $path))));
+            }
+
+            $data = $data[$key];
+        }
+
+        return $data;
     }
 }

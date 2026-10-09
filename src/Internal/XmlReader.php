@@ -14,8 +14,8 @@ use IdSign\BusinessRegisters\Source;
  * elements without a namespace. Lookups see direct children only.
  *
  * Methods without a prefix are mandatory: an absent node or a text that is empty after trimming
- * throws InvalidResponse; the optional… variants return null instead. An unreadable date throws
- * in both.
+ * throws InvalidResponse; the optional… variants return null instead. An unreadable integer, date
+ * or date-time throws in both.
  *
  * Error messages name the path and the expected type, never a value from the response.
  * Paths are XPath-style: names joined by "/", positions 1-based, attributes with "@"
@@ -145,6 +145,62 @@ final readonly class XmlReader
         $children = $this->children($name);
 
         return [] === $children ? null : self::nonEmpty($children[0]->textContent);
+    }
+
+    /**
+     * Child text of digits as an integer.
+     *
+     * @throws InvalidResponse
+     */
+    public function int(string $name): int
+    {
+        return $this->optionalInt($name) ?? throw $this->missing($name);
+    }
+
+    /**
+     * @throws InvalidResponse
+     */
+    public function optionalInt(string $name): ?int
+    {
+        $text = $this->optionalString($name);
+        if (null === $text) {
+            return null;
+        }
+
+        return Integers::fromDigits($text) ?? throw $this->invalid($name, 'integer');
+    }
+
+    /**
+     * Child text Y-m-d as midnight in Europe/Prague; no mandatory twin, no source needs one.
+     *
+     * @throws InvalidResponse
+     */
+    public function optionalDate(string $name): ?\DateTimeImmutable
+    {
+        $value = $this->optionalString($name);
+        if (null === $value) {
+            return null;
+        }
+
+        // xsd:date allows one zone offset; like the "Z" suffix it is ignored
+        $value = preg_replace('/^(\d{4}-\d{2}-\d{2})[+-]\d{2}:\d{2}$/D', '$1', $value) ?? $value;
+
+        return Dates::date($value) ?? throw $this->invalid($name, 'date (Y-m-d)');
+    }
+
+    /**
+     * Child text date and time as Europe/Prague local time, see Dates::dateTimePrague().
+     *
+     * @throws InvalidResponse
+     */
+    public function optionalDateTimePrague(string $name): ?\DateTimeImmutable
+    {
+        $value = $this->optionalString($name);
+        if (null === $value) {
+            return null;
+        }
+
+        return Dates::dateTimePrague($value) ?? throw $this->invalid($name, 'date-time');
     }
 
     /**

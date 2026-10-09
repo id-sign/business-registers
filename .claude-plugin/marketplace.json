@@ -9,12 +9,13 @@
         {
             "name": "business-registers",
             "source": "./",
-            "description": "Skill for PHP projects that use id-sign/business-registers: Czech company lookup in ARES, VAT payer status in ADIS and EU VAT id validity in VIES.",
+            "description": "Skill for PHP projects that use id-sign/business-registers: Czech company lookup in ARES, VAT payer status in ADIS, EU VAT id validity in VIES and insolvency proceedings in ISIR.",
             "category": "development",
             "tags": [
                 "php",
                 "ares",
                 "vies",
+                "isir",
                 "vat",
                 "czech"
             ],

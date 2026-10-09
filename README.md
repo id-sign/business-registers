@@ -4,15 +4,15 @@
 [![Packagist](https://img.shields.io/packagist/v/id-sign/business-registers.svg)](https://packagist.org/packages/id-sign/business-registers)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Typed, stateless PHP client for Czech business registers. One call gives you a company profile that combines three
+Typed, stateless PHP client for Czech business registers. One call gives you a company profile that combines four
 sources, so you never deal with JSON, SOAP or per-source quirks yourself:
 
 - **ARES** — company identity: name, seat, legal form, VAT ids, status in 16 source registers; bulk lookup and search.
 - **VAT register (ADIS)** — VAT payer status, unreliable payers, published bank accounts.
 - **VIES** — validity of an EU VAT id, with a consultation number.
+- **Insolvency register (ISIR)** — insolvency proceedings of a subject by IČO, ongoing or ended.
 
-Not covered: register extracts (public register, trade register), the insolvency register (ISIR), ARES code lists
-and the ARES change feed.
+Not covered: register extracts (public register, trade register), ARES code lists and the ARES change feed.
 
 ## What you can get
 
@@ -48,10 +48,17 @@ and the ARES change feed.
 - whether a declared name, street, postal code, city and company type match the register, where the member state
   compares them
 
-**Company profile** — one call that combines the sources above, reports per source whether it answered, and derives
-risk flags: ceased, in liquidation, insolvency record, unreliable VAT payer, unreliable person, VAT registration
-ended, VAT payer without a published bank account, VAT id invalid in VIES. For a list of IČO, one call builds all
-profiles with one ARES and one ADIS request per 100 companies.
+**Insolvency register (ISIR)** — by IČO, one request per company:
+
+- every proceeding the register currently lists for the subject, ongoing and ended: case reference, court, state,
+  date of the decision on insolvency, end date, link to the case file
+- whether a proceeding is ongoing, a filed petition included
+- the debtor as the register publishes it: name, address, birth number and birth date of natural persons
+
+**Company profile** — one call that combines the sources above, reports per source whether it answered, and derives risk
+flags: ceased, in liquidation, insolvency record, ongoing insolvency proceeding, unreliable VAT payer, unreliable person,
+VAT registration ended, VAT payer without a published bank account, VAT id invalid in VIES. For a list of IČO, one call
+builds all profiles with one ARES and one ADIS request per 100 companies.
 
 **Validation without a request** — IČO (including the check digit) and DIČ (format; strict digits-only check for CZ)
 are normalised and validated locally before any register is asked. An IČO that ARES itself returns is taken as the
@@ -81,6 +88,8 @@ IdSign\BusinessRegisters\Adis\VatRegisterClient: ~
 IdSign\BusinessRegisters\Adis\VatRegister: '@IdSign\BusinessRegisters\Adis\VatRegisterClient'
 IdSign\BusinessRegisters\Vies\ViesClient: ~
 IdSign\BusinessRegisters\Vies\Vies: '@IdSign\BusinessRegisters\Vies\ViesClient'
+IdSign\BusinessRegisters\Isir\InsolvencyClient: ~
+IdSign\BusinessRegisters\Isir\InsolvencyRegister: '@IdSign\BusinessRegisters\Isir\InsolvencyClient'
 IdSign\BusinessRegisters\CompanyLookup: ~
 ```
 
@@ -90,6 +99,7 @@ IdSign\BusinessRegisters\CompanyLookup: ~
 use IdSign\BusinessRegisters\Adis\VatRegisterClient;
 use IdSign\BusinessRegisters\Ares\AresClient;
 use IdSign\BusinessRegisters\CompanyLookup;
+use IdSign\BusinessRegisters\Isir\InsolvencyClient;
 use IdSign\BusinessRegisters\Vies\ViesClient;
 use Symfony\Component\HttpClient\HttpClient;
 
@@ -98,7 +108,8 @@ $http = HttpClient::create();
 $ares = new AresClient($http);
 $vatRegister = new VatRegisterClient($http);
 $vies = new ViesClient($http);
-$lookup = new CompanyLookup($ares, $vatRegister, $vies);
+$isir = new InsolvencyClient($http);
+$lookup = new CompanyLookup($ares, $vatRegister, $vies, $isir);
 ```
 
 Each client takes `$endpoint` (default: the production service) and `$timeout` in seconds (default `10.0`) as optional
@@ -126,7 +137,7 @@ use IdSign\BusinessRegisters\RiskFlag;
 use IdSign\BusinessRegisters\Section;
 use IdSign\BusinessRegisters\SectionStatus;
 
-$profile = $lookup->byCompanyId('452 746 49', Section::Vat, Section::Vies);
+$profile = $lookup->byCompanyId('452 746 49', Section::Vat, Section::Vies, Section::Insolvency);
 
 if (null === $profile) {
     // ARES does not hold the subject (usually also true for deleted subjects)
@@ -134,10 +145,11 @@ if (null === $profile) {
 }
 
 echo $profile->company->name;                    // "ČEZ, a. s."
-$profile->isComplete();                          // false if any requested section is Unavailable or Rejected
+$profile->isComplete();                          // false if a requested section is Unavailable or Rejected, or Insolvency is NotApplicable
 $profile->status(Section::Vat);                  // SectionStatus::Ok
 $profile->vat?->type;                            // SubjectType::VatPayer
 $profile->vies?->valid;                          // true
+$profile->insolvencies?->hasOngoing();           // false
 
 $profile->flags();                               // list<RiskFlag>, e.g. [RiskFlag::UnreliableVatPayer]
 $profile->hasFlag(RiskFlag::Ceased);             // false
@@ -147,22 +159,28 @@ if (SectionStatus::Unavailable === $profile->status(Section::Vies)) {
 }
 ```
 
+The sections are `Section::Vat` (VAT register, `$profile->vat`), `Section::Vies` (`$profile->vies`) and
+`Section::Insolvency` (insolvency register ISIR, `$profile->insolvencies`). Vat and Vies are looked up under the
+company's DIČ (`Company::vatLookupId()`), Insolvency under its IČO, so a company without a DIČ still gets an
+Insolvency answer. Insolvency is `Ok` also when ISIR lists nothing (an empty collection); it is never `NotFound`.
+
 The IČO may be given as a string in any spacing or a `CompanyId`. A section whose source is down does not fail the
 lookup: its status becomes `Unavailable` and the other sections are still filled. A section whose source rejects the
-request (an `InvalidInput` from ADIS or VIES, e.g. VIES `INVALID_REQUESTER_INFO` for a wrong requester) becomes
+request (an `InvalidInput` from ADIS, VIES or ISIR, e.g. VIES `INVALID_REQUESTER_INFO` for a wrong requester) becomes
 `Rejected` the same way, with the exception and its `errorCode` in `error()`; the answer is **unknown** and asking again
 will not help until the input or configuration is fixed. Only ARES errors are thrown, because without ARES there is no
 profile.
 
 #### Five meanings of `null`
 
-`$profile->vat` and `$profile->vies` are `null` in five different situations; `status()` tells them apart:
+`$profile->vat`, `$profile->vies` and `$profile->insolvencies` are `null` in five different situations; `status()`
+tells them apart:
 
 | `status($section)` | Meaning                                                                                                      |
 |--------------------|--------------------------------------------------------------------------------------------------------------|
 | `NotRequested`     | the section was not passed to `byCompanyId()` / `byCompanyIds()`                                             |
 | `NotFound`         | the source answered that it does not hold the subject                                                        |
-| `NotApplicable`    | the subject has no VAT id, so there is nothing to ask for                                                    |
+| `NotApplicable`    | the subject has no id the section is asked under (no DIČ for Vat and Vies, no IČO for Insolvency)            |
 | `Unavailable`      | the source could not answer — the answer is **unknown**; `error()` holds the exception                       |
 | `Rejected`         | the source rejected the request — **unknown**; fix the input or configuration; `error()` holds the exception |
 
@@ -182,13 +200,14 @@ requested**.
 | `Ceased`                 | ARES `datumZaniku` — the day the subject ceased to exist (zánik, NOZ § 185: deletion from the register) or its registration ended — is today or in the past (midnight Europe/Prague). Not the dissolution (zrušení): a company in liquidation is still active, see `InLiquidation`. A future date raises nothing (it stays in `$company->ceasedOn`) | —               |
 | `InLiquidation`          | the name contains the standalone phrase "v likvidaci" anywhere: at the end, before the legal form (`… v likvidaci, s.r.o.`), between dashes, slashes or parentheses; case-insensitive. Mandatory suffix for a legal person in liquidation (NOZ § 187 odst. 2); never raised for natural persons, foreign persons and branches, or a dissolution without liquidation | —               |
 | `InsolvencyRecord`       | ARES lists the subject in the insolvency register — a record, possibly a closed one                                                                                                                                                  | —               |
+| `Insolvency`             | ISIR lists at least one ongoing proceeding (`InsolvencyProceeding::isOngoing()`), a filed petition included; a closed proceeding raises only `InsolvencyRecord`                                                                     | `Section::Insolvency` |
 | `UnreliableVatPayer`     | the VAT register marks a VAT payer or VAT group as unreliable (nespolehlivyPlatce); implies `isVatPayer() === true`                                                                                                                  | `Section::Vat`  |
 | `UnreliablePerson`       | the subject is an unreliable person under §106aa of the VAT Act: the register keeps it as an unreliable person, or marks a non-payer identified person as unreliable                                                                 | `Section::Vat`  |
 | `VatRegistrationEnded`   | ARES VAT registration is `Ended` or `Historical`, the subject is not in an active VAT group, and the VAT register (when `Section::Vat` is `Ok`) does not say the subject is a VAT payer                                          | —               |
 | `NoPublishedBankAccount` | a VAT payer or VAT group without any active published bank account                                                                                                                                                                   | `Section::Vat`  |
 | `ViesInvalid`            | VIES answered that the VAT id is not valid                                                                                                                                                                                           | `Section::Vies` |
 
-#### Shortcuts: `isVatPayer()` and `hasPublishedAccount()`
+#### Shortcuts: `isVatPayer()`, `hasPublishedAccount()` and `isInInsolvency()`
 
 ```php
 $profile->isVatPayer();                          // ?bool
@@ -205,6 +224,28 @@ Both are tri-state and read `Section::Vat`:
 | `Rejected`                  | `null` — **unknown**, fix the input or configuration; asking again will not help                 |
 | `NotRequested`              | throws `\LogicException` — you forgot to pass `Section::Vat`                                     |
 
+`isInInsolvency()` answers "is the subject in insolvency now?" from `Section::Insolvency`, tri-state as well, except
+that `NotApplicable` is unknown:
+
+```php
+$profile->isInInsolvency();                      // ?bool
+```
+
+| `status(Section::Insolvency)` | Result                                                                                     |
+|-------------------------------|--------------------------------------------------------------------------------------------|
+| `Ok`                          | `true` when ISIR lists an ongoing proceeding (a filed petition included), else `false`     |
+| `NotApplicable`               | `null` — **unknown**; the subject has no IČO, and ISIR can list a person under the birth number alone; `isComplete()` is `false` |
+| `Unavailable`                 | `null` — **unknown**, ask again later; never read it as "not in insolvency"                |
+| `Rejected`                    | `null` — **unknown**, fix the input or configuration                                      |
+| `NotRequested`                | throws `\LogicException` — you forgot to pass `Section::Insolvency`                        |
+
+ISIR is asked by IČO only. For a company that is complete: the court always records a company's IČO. A natural person
+with an IČO (a self-employed person) is recorded mainly under the name and birth number, and the court may leave the
+IČO out; ISIR then finds nothing by IČO although the person is in insolvency. So for a natural person `false` (and no
+`RiskFlag::Insolvency`) means "no proceeding recorded under this IČO", not "certainly not in insolvency". The legal
+form in `$profile->company` tells the two apart; to be sure about a natural person, check ISIR under the name or birth
+number yourself.
+
 Requesting a section whose client was not passed to the `CompanyLookup` constructor also throws `\LogicException`,
 before any request is made.
 
@@ -220,12 +261,13 @@ from the IČO.
 
 #### VIES requester
 
-Pass your own VAT id as the fourth constructor argument to get a consultation number in `$profile->vies`:
+Pass your own VAT id as the fifth constructor argument `viesRequester` to get a consultation number in
+`$profile->vies`:
 
 ```php
 use IdSign\BusinessRegisters\VatId;
 
-$lookup = new CompanyLookup($ares, $vatRegister, $vies, viesRequester: VatId::parse('CZ12345678'));
+$lookup = new CompanyLookup($ares, $vatRegister, $vies, $isir, viesRequester: VatId::parse('CZ12345678'));
 ```
 
 #### Many companies at once
@@ -234,7 +276,14 @@ $lookup = new CompanyLookup($ares, $vatRegister, $vies, viesRequester: VatId::pa
 with one `findMany()`, section `Vat` with one ADIS `findMany()` over the companies' `vatLookupId()` values (a VAT group
 is asked once for all its members). 100 IČO with `Section::Vat` are 1 ARES and 1 ADIS request (both clients send
 batches of 100). VIES has no bulk call: `Section::Vies` makes one `check()` per distinct lookup DIČ (a VAT group is
-checked once for all its members), one after another, so 100 companies with `Vies` take minutes.
+checked once for all its members), one after another, so 100 companies with `Vies` take minutes. ISIR has no bulk
+call either: `Section::Insolvency` makes one `find()` per company, one after another in ARES response order —
+typically 0.10–0.25 s each (100 companies ≈ 10–25 s). After two connection failures in a row (timeout, refused or
+blocked connection, e.g. port 8443 closed by a firewall; `ServiceUnavailable::$connectionFailed`) to VIES or to ISIR,
+each counted on its own, no further request to that source is sent in that call, so an unreachable source costs two timeouts, not one per company; a single slow
+answer does not stop the call. Every company not yet asked gets that section `Unavailable` with its own
+`ServiceUnavailable` ("… was not sent after 2 connection failures in a row", `connectionFailed` true, the last
+failure as the previous exception). An answer, an error code or an HTTP error resets the count.
 
 ```php
 use IdSign\BusinessRegisters\CompanyId;
@@ -253,17 +302,18 @@ foreach ($profiles->missing($requested) as $id) {   // list<CompanyId> — not h
 
 The statuses mean the same as for one company. If the ADIS call fails (outage, invalid response), `Vat` is
 `Unavailable` for every profile asked in that call; a company whose lookup DIČ is not Czech is not sent to ADIS and
-gets `Rejected`. A VIES outage or rejection affects only the companies with that lookup DIČ, which share the
-stored exception. Once VIES rejects the requester (`INVALID_REQUESTER_INFO`), no further VIES request is sent in that
+gets `Rejected`. Apart from the stop after connection failures, a VIES outage or rejection affects only the companies
+with that lookup DIČ, which share the stored exception. Once VIES rejects the requester (`INVALID_REQUESTER_INFO`), no further VIES request is sent in that
 call: every company whose lookup DIČ was not yet checked gets `Rejected` with that same exception instance, whose
 message names the DIČ of the request that was rejected; a company whose lookup DIČ was already checked keeps that
-answer. The next call asks VIES again. Every IČO and the section clients are checked before
+answer. The next call asks VIES again. Any other ISIR failure (an error code, an HTTP error, an invalid response)
+affects only that company. Every IČO and the section clients are checked before
 the first request; ARES errors are thrown.
 
 #### Change tracking
 
-To detect changes between runs, store snapshots of the DTOs (`$profile->company`, `$profile->vat`, `$profile->vies`),
-not of the whole profile. `serialize($profile)` can fail when a stored exception carries a stack trace with
+To detect changes between runs, store snapshots of the DTOs (`$profile->company`, `$profile->vat`, `$profile->vies`,
+`$profile->insolvencies`), not of the whole profile. `serialize($profile)` can fail when a stored exception carries a stack trace with
 non-serialisable arguments (`zend.exception_ignore_args=0`, the `php.ini-development` default).
 
 ### Storing identifiers
@@ -275,7 +325,8 @@ properties. A single id parameter is typed `CompanyId|string` (`find()`, `get()`
 is then `true`). The elements of an id list (`findMany()`, `byCompanyIds()`, `missing()`) are checked by the library:
 an element that is neither a `CompanyId` nor a string is an `InvalidInput`. A legacy `INT` column must be cast to a
 string at your boundary (better: migrate the column). `CompanyId::parse()` restores the leading zeros. DIČ is a
-string for the same reason.
+string for the same reason. The ISIR birth number (`InsolvencyProceeding::$birthNumber`) is a string exactly as the
+register sent it, never normalised or validated; it is personal data, store it only if you have a reason to.
 
 ```php
 use IdSign\BusinessRegisters\CompanyId;
@@ -296,6 +347,18 @@ from `$company->id` or from any other response — is re-hydrated with `CompanyI
 back. ARES holds active subjects whose IČO fails the check digit (`00123562`, `29340042`), and you cannot tell in
 advance which stored string is one of them: a single such string makes the whole `findMany()` / `byCompanyIds()`
 call throw `InvalidInput` before any request, and `missing()` / `get()` of the result throw for it too.
+
+### Addresses
+
+ARES seats, ADIS addresses and ISIR debtor addresses share `Address` with one meaning per field: `street` is the street
+name (or the part of the municipality where there is none; ISIR, which has no part of the municipality, the city)
+with the numbers, "Duhová 1444/2"; `streetName`,
+`houseNumber` and `orientationNumber` are its parts; `postalCode` is five digits without a space. ADIS and ISIR fill
+the parts only when their value splits unambiguously, otherwise the source value stays in `street`. A number label
+("č.ev.3", "čp.153") sets `houseNumberType` (2 registration, 1 descriptive) and is left out of `street`, as in ARES. Names stay as the
+source writes them: ADIS uses upper case, ADIS and ISIR can put a city district into `city` ("PRAHA 4", "Praha 5"),
+where ARES has `city` "Praha" and `cityDistrict`, and ISIR `ulice` (`streetName`) is the village name where there are
+no streets ("Libotenice"), where ARES has `district`. VIES returns free text (`ViesResult::$address`).
 
 ### ARES
 
@@ -444,6 +507,54 @@ A match property is `null` when VIES did not return the field. Without `TraderDe
 Spain does not disclose name and address (`$result->name === null`), so matching is the official way to verify a
 Spanish trader.
 
+### Insolvency register (ISIR)
+
+`find()` takes an IČO (a string is checked strictly, including the check digit, before any request) and returns every
+proceeding the register currently lists for it, ended ones included:
+
+```php
+use IdSign\BusinessRegisters\Isir\InsolvencyClient;
+
+$isir = new InsolvencyClient($http);
+$proceedings = $isir->find('25083325');          // InsolvencyProceedings; empty when the subject is not listed
+
+$proceedings->hasOngoing();                      // true
+$proceedings->ongoing();                         // list<InsolvencyProceeding>
+$proceedings->synchronisedAt;                    // ?DateTimeImmutable — how fresh the register data are
+foreach ($proceedings as $proceeding) {          // also $proceedings->proceedings, count($proceedings)
+    $proceeding->reference();                    // "95 INS 12575/2022"
+    $proceeding->isOngoing();                    // true
+    $proceeding->stateCode;                      // ?string, e.g. "KONKURS"
+    $proceeding->insolvencyDeclaredOn;           // ?DateTimeImmutable — decision on insolvency took legal force
+    $proceeding->endedOn;                        // ?DateTimeImmutable — end of the proceeding took legal force
+}
+```
+
+- `isOngoing()` is `true` unless the proceeding has an end date (`endedOn`) or one of the ended states `ODSKRTNUTA`,
+  `PRAVOMOCNA`, `VYRIZENA`, `MYLNÝ ZÁP.`; a missing or unknown state counts as ongoing (a false alarm is safer than a
+  missed insolvency). A filed petition (`NEVYRIZENA`) is ongoing.
+- `stateCode` is the register's raw value, never an enum. Observed: `NEVYRIZENA`, `ÚPADEK`, `KONKURS`, `REORGANIZ`,
+  `ODDLUŽENÍ`, `PRAVOMOCNA`, `ODSKRTNUTA`, `VYRIZENA`. `KONKURS` or `ÚPADEK` does not mean the proceeding is still
+  running (České aerolinie `45795908`: `ÚPADEK` with an end date).
+- An empty collection means "not on the list of debtors now", not "never insolvent": the court removes a debtor
+  5 years after the end of the proceeding took legal force, sooner in some cases (Act No. 182/2006 Sb. § 425).
+- A row is one debtor of a proceeding. Rows sharing a `reference()` can be co-debtors (with the co-debtor's personal
+  data) or the same debtor listed twice (two addresses), so `count()` can count a proceeding twice.
+  `otherDebtorInProceeding` is the register's raw `dalsiDluznikVRizeni`; its meaning is undocumented and observed to
+  vary by query, so do not read it as "has co-debtors". A natural person is found by IČO only if the court recorded it.
+- `insolvencyDeclaredOn` can be `null` although insolvency was declared (older proceedings); `stateCode` decides.
+  `addressKind` is the raw `druhAdresy`, observed `SÍDLO FY`, `SÍDLO ORG.`, `TRVALÁ`.
+- The ministry runs the successor eISIR in verification operation and has announced a change of the web services
+  without a date. The client sits behind `InsolvencyRegister`.
+- Every row carries what the register publishes (§ 420), including the birth number (`birthNumber`, as received),
+  birth date, name and address of natural persons. Your application is the controller of that personal data.
+- `synchronisedAt` is the register's own freshness hint, read as Prague local time (verified in summer time only); the
+  register omits it for an empty result, and an unreadable value is `null`. It is never part of a verdict.
+- The service listens on port 8443 (`https://isir.justice.cz:8443/...`); allow it in your egress firewall. One `find()`
+  is one request, 0.1–0.25 s observed.
+- `find()` returns at most 100 proceedings (a proceeding can have several rows). A subject with more than 100 listed
+  proceedings throws `InvalidResponse` rather than returning an incomplete list that might leave out an ongoing one.
+
 ## Error handling
 
 Every exception implements `IdSign\BusinessRegisters\Exception\ExceptionInterface`.
@@ -454,10 +565,11 @@ Every exception implements `IdSign\BusinessRegisters\Exception\ExceptionInterfac
 | `ServiceUnavailable`                                 | the source could not answer: transport error, timeout, outage, overload | try again later; it is **never** a business answer such as "not a payer" |
 | `InvalidResponse`                                    | the source answered something the library cannot read                   | an error to investigate; report it                                       |
 
-`InvalidInput` has `?string $errorCode`; `ServiceUnavailable` has `Source $source` and `?string $errorCode`;
-`InvalidResponse` has `Source $source`. `Source` is `Ares`, `Adis` or `Vies`; the case `Isir` is reserved and no
-exception carries it. `CompanyLookup::byCompanyId()` throws only ARES errors; an exception from a section is recorded in
-the profile (`Unavailable` or `Rejected`, see [Five meanings of `null`](#five-meanings-of-null)).
+`InvalidInput` has `?string $errorCode`; `ServiceUnavailable` has `Source $source`, `?string $errorCode` and
+`bool $connectionFailed` (the source was not reached: a transport error or timeout, not an error status or code);
+`InvalidResponse` has `Source $source`. `Source` is `Ares`, `Adis`, `Vies` or `Isir`. `CompanyLookup::byCompanyId()`
+throws only ARES errors; an exception from a section is recorded in the profile (`Unavailable` or `Rejected`, see
+[Five meanings of `null`](#five-meanings-of-null)).
 
 ```php
 use IdSign\BusinessRegisters\Exception\InvalidInput;
@@ -482,9 +594,9 @@ Rules for messages:
   as Monolog's do not log custom exception properties, so the code has to be in the message. The suffix is appended
   only when the code looks like a token (`[A-Za-z0-9_.:-]`, 1–64 characters); `$e->errorCode` always holds the raw value
   and should be treated as untrusted text. Branch on `$e->errorCode` and `$e->source`, never parse the message.
-- Messages never contain response text (ARES `popis`, ADIS `statusText`, SOAP `faultstring`, VIES `message`) or record
-  data. They may contain the id you passed in, the HTTP status and, for a transport failure, the error text of the
-  HTTP client.
+- Messages never contain response text (ARES `popis`, ADIS `statusText`, ISIR `textChyby` / `popisChyby`, SOAP
+  `faultstring`, VIES `message`) or record data. They may contain the id you passed in, the HTTP status and, for a
+  transport failure, the error text of the HTTP client.
 - `InvalidResponse` messages contain only the source label, the key path and the expected type, for example
   `ARES: expected string at sidlo.nazevObce`. JSON paths are jq-style with 0-based indices (`zaznamy[0].ico`); XML paths
   are XPath with 1-based indices
@@ -499,6 +611,9 @@ Per source:
 | ARES   | other status, transport error, timeout                                                                                              | `ServiceUnavailable`                                                                                                                             |
 | ADIS   | status code 1, unknown code                                                                                                         | `InvalidResponse`                                                                                                                                |
 | ADIS   | status code 2 (nightly maintenance), 3, SOAP Fault, HTTP ≠ 200, transport error, timeout                                            | `ServiceUnavailable`, `errorCode` = status code 2 or 3, or the SOAP `faultcode` (also with HTTP ≠ 200); otherwise `null`                         |
+| ISIR   | empty result (`WS2`)                                                                                                                | `find()` returns an empty collection                                                                                                             |
+| ISIR   | `WS4` (data not current), `SQL1`, `SERVER1`, SOAP Fault, HTTP ≠ 200, transport error, timeout                                       | `ServiceUnavailable`, `errorCode` = the ISIR code or the SOAP `faultcode` (also with HTTP ≠ 200); otherwise `null`                               |
+| ISIR   | `WS1`, `WS3`, unknown code, truncated answer (`pocetVysledku` above the rows returned), more than 100 proceedings                   | `InvalidResponse`                                                                                                                                |
 | VIES   | `INVALID_INPUT`, `INVALID_REQUESTER_INFO`, HTTP 400                                                                                 | `InvalidInput`, `errorCode` = VIES code                                                                                                          |
 | VIES   | every other code (`MS_UNAVAILABLE`, `TIMEOUT`, `*_MAX_CONCURRENT_REQ*`, `VAT_BLOCKED`, `IP_BLOCKED`, unknown codes), other statuses | `ServiceUnavailable`, `errorCode` = VIES code when the body is readable                                                                          |
 | any    | element of the wrong type in an id list, a duplicate in a collection constructor                                                    | `InvalidInput`                                                                                                                                   |
@@ -514,7 +629,7 @@ The ARES status in the 16 source registers (`$company->registrations`) is a poin
 | VAT id filled in ARES = VAT payer                     | the VAT id stays after the registration ended (`26863154` has a DIČ and `Vat = Ended`); `Vat = Active` also covers identified persons. Only ADIS decides whether a subject is a VAT payer; `Vat = Ended` can lag behind ADIS (`10803351` is a payer in ADIS), so `VatRegistrationEnded` yields to an `Ok` VAT section                                                         |
 | every company has a DIČ of its own                    | a VAT group member has a group DIČ and its own `vatId` is `null` or a former own DIČ (Komerční banka `45317054`: group DIČ `CZ699001182`, no own; `21985685`: former own DIČ, `Vat = Ended`). Use `vatLookupId()`, never `vatId`                                                                                                                                                  |
 | a DIČ can be derived from the IČO                     | natural persons have a nine- or ten-digit DIČ: the birth number (nine digits for births before 1954) or a nine-digit identifier assigned by the tax administrator (starts with 6; daňový řád § 130 odst. 4), which also foreign persons and VAT groups (`CZ699…`) get, and a derived DIČ of a group member is usually not found in ADIS. Always take the DIČ from ARES                                                                                                        |
-| `Insolvency = Active` means in insolvency now         | it stays `Active` after the proceedings ended (České aerolinie `45795908`). Only the insolvency register (ISIR, not covered by this library) tells whether it is current — hence the flag is named `InsolvencyRecord`                                                                                                                                                                 |
+| `Insolvency = Active` means in insolvency now         | it stays `Active` after the proceedings ended (České aerolinie `45795908`). Only the insolvency register tells whether it is current (`Section::Insolvency`, `isInInsolvency()`, flag `Insolvency`) — hence the ARES flag is named `InsolvencyRecord`                                                                                                                                          |
 | `Bankruptcy` (CEÚ) reflects insolvency                | it does not: CEÚ (centrální evidence úpadců) holds only bankruptcy (konkurs) and composition (vyrovnání) proceedings under the former Act No. 328/1991 Sb., i.e. opened before 1 January 2008; everything since is in the insolvency register (Act No. 182/2006 Sb. § 432). Sberbank CZ `25083325` in bankruptcy: `Nonexistent`. Do not use it                                                                                                                                                                                                                                                                                                      |
 | every IČO in ARES satisfies the check digit           | no: `00123562`, `29340042` are active. `$company->id` may have `hasValidCheckDigit() === false`; strings you pass stay strict, so re-hydrate ids stored from ARES with `CompanyId::fromRegister()` (§ Storing identifiers); the check digit is a convention of the register administrator, not a legal requirement                                                                                                                                                            |
 | `taxOfficeCode` of ARES and ADIS name the same office | not always. Both are codes of the list `FinancniUrad`. ARES `financniUrad` is the competent workplace (`293` = Územní pracoviště Brno-venkov) or `013` Specialised Tax Office; ADIS `cisloFu` is a regional office 451–464 (`461` = Finanční úřad pro Jihomoravský kraj) or `013`. They are equal only for Specialised Tax Office subjects; never compare or join them across sources |
@@ -522,6 +637,15 @@ The ARES status in the 16 source registers (`$company->registrations`) is a poin
 | `datumZaniku` marks the dissolution                   | it is the end of existence (zánik, NOZ § 185) or of the registration, not the dissolution (zrušení, NOZ § 168); a dissolved company in liquidation is active in ARES (`InLiquidation`). ARES carries a future `datumZaniku` for some active subjects (`72396067`, a natural person with an authorisation recorded until 2035-12-10); `Ceased` is raised only once the date has come (`Company::hasCeased()`)                                                                                                                                                                                              |
 | a deleted subject is returned                         | ARES usually answers 404, so `find()` returns `null`; it can serve a subject that has ceased for some days after `datumZaniku`, then `Ceased` can appear next to `PersonsRegister = Active`                                                                                                                                                                                              |
 | statuses are complete                                 | all 16 registers are always present; a key ARES omits is `Nonexistent`; a value ARES adds later is `Unknown`                                                                                                                                                                                                                                                                          |
+
+The insolvency register answers for the moment of the query and only for what the court recorded:
+
+| Do not assume                                      | Reality                                                                                                                                                                         |
+|----------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| the service's `filtrAktualniRizeni` means ongoing  | it hides only `ODSKRTNUTA` and `PRAVOMOCNA`, other ended proceedings stay; the library asks for every listed proceeding and decides with `InsolvencyProceeding::isOngoing()`     |
+| `KONKURS` or `ÚPADEK` = the proceeding is running  | the state can stay after the end (České aerolinie `45795908`: `ÚPADEK` with an end date); `isOngoing()` checks the end date and the ended states                                 |
+| an empty result = never insolvent                  | it means "not on the list of debtors now": the court removes a debtor 5 years after the end of the proceeding took legal force, sooner in some cases (Act No. 182/2006 Sb. § 425) |
+| a self-employed person is always found by IČO      | only if the court recorded the IČO with the debtor                                                                                                                              |
 
 What the registers do not return: the date a VAT registration started or ended and its history (neither ADIS nor ARES
 has it), and the reason a subject is an unreliable payer. The library does not cover statutory bodies and members
@@ -537,6 +661,7 @@ lists.
 - ADIS is unavailable every night from 0:00 to 0:10 (`ServiceUnavailable`, `errorCode` `2`).
 - VIES and the member states throttle concurrent requests (`MS_MAX_CONCURRENT_REQ`, `GLOBAL_MAX_CONCURRENT_REQ`);
   treat these as `ServiceUnavailable` and retry later. Some member states do not disclose name and address.
+- ISIR has no bulk query: one `find()` is one request, 0.1–0.25 s observed.
 - Default timeout 10 s per request (idle and total), including the time a request waits queued at the source.
 
 The operators publish terms of use. The library is stateless and does not enforce them; a breach can get your IP
@@ -547,15 +672,16 @@ address restricted or blocked, so throttle in your application (all workers behi
 | ARES   | at most 500 requests per minute; no "larger number of simultaneous requests" from automated clients (no figure is published); no repeated identical or mostly invalid requests, no probing with random data                                   | [ares.gov.cz › Info pro vývojáře](https://ares.gov.cz/stranky/vyvojar-info), [mf.gov.cz › ARES](https://mf.gov.cz/cs/ministerstvo/informacni-systemy/ares)        |
 | ADIS   | at most 4 requests in parallel, 2 000 requests per hour and 10 000 requests per 24 hours (one request = one call with up to 100 DIČ); no repeated identical requests. Scheduled maintenance every Sunday 3:00–4:00                            | [MOJE daně › Dokumentace › webová služba](https://adisspr.mfcr.cz/pmd/dokumentace/webove-sluzby-spolehlivost-platcu)                                              |
 | VIES   | a global and a per-member-state cap on concurrent requests, counted across all users; the thresholds are not published. A request above the cap is rejected (`*_MAX_CONCURRENT_REQ*`); abusive use gets the IP address blocked (`IP_BLOCKED`) | [VIES › FAQ (Q15)](https://ec.europa.eu/taxation_customs/vies/#/faq), [Technical information](https://ec.europa.eu/taxation_customs/vies/#/technical-information) |
+| ISIR   | no limits or terms published; the service is undocumented apart from its XSD, listens on port 8443 and is due to change (eISIR)                                                                                                               | —                                                                                                                                                                 |
 
 - The library does no caching, retrying, rate limiting, scheduling or persistence. Add what you need around it (cache
   profiles, retry `ServiceUnavailable` with back-off, queue lookups).
 
 ## Testing your code
 
-All three registers sit behind interfaces — `CompanyDirectory`, `VatRegister`, `Vies` — so your code can depend on them
-and your tests can substitute doubles. Collections are built from lists, and every company needs an IČO and ids must be
-unique, or the constructor throws `InvalidInput`.
+All four registers sit behind interfaces — `CompanyDirectory`, `VatRegister`, `Vies`, `InsolvencyRegister` — so your
+code can depend on them and your tests can substitute doubles. Collections are built from lists, and every company needs
+an IČO and ids must be unique, or the constructor throws `InvalidInput`.
 
 ```php
 use IdSign\BusinessRegisters\Ares\AresRegister;
@@ -590,7 +716,9 @@ $directory = $this->createStub(CompanyDirectory::class);   // PHPUnit
 $directory->method('findMany')->willReturn(new Companies([$company]));
 ```
 
-`VatSubjects` and `CompanyProfiles` are built the same way from a list of `VatSubject` or `CompanyProfile`.
+`VatSubjects` and `CompanyProfiles` are built the same way from a list of `VatSubject` or `CompanyProfile`;
+`InsolvencyProceedings` from a list of `InsolvencyProceeding` and the freshness hint
+(`new InsolvencyProceedings([], synchronisedAt: null)` for a subject that is not listed).
 `CompanyProfile` has a public constructor too; use named arguments, and key `statuses` and `errors` by `Section::name`:
 
 ```php
@@ -602,6 +730,7 @@ $profile = new CompanyProfile(
     company: $company,
     vat: null,
     vies: null,
+    insolvencies: null,
     statuses: [Section::Vat->name => SectionStatus::Unavailable],
     errors: [],
 );
@@ -638,7 +767,7 @@ can read `SKILL.md` directly.
 ```bash
 composer install
 composer test        # unit suite, no network
-composer test:live   # live suite against the production registers (ARES, ADIS, VIES)
+composer test:live   # live suite against the production registers (ARES, ADIS, VIES, ISIR)
 composer phpstan     # PHPStan, level max, strict rules, over src and tests
 composer cs          # PHP CS Fixer, dry run (composer cs:fix applies)
 composer check       # cs, phpstan and test; run before every commit
@@ -654,9 +783,9 @@ Contribution rules are in [CONTRIBUTING.md](CONTRIBUTING.md); report a vulnerabi
 ## Disclaimer
 
 This is an independent project. It is not affiliated with or endorsed by the Ministry of Finance of the Czech Republic,
-the Czech Tax Administration or the European Commission, which operate ARES, ADIS and VIES. The library passes on what
-these services answer; risk flags are derived from that data by the rules above (see
-[What the data means](#what-the-data-means)) and are not a legal assessment of a subject.
+the Czech Tax Administration, the European Commission or the Ministry of Justice of the Czech Republic, which operate
+ARES, ADIS, VIES and ISIR. The library passes on what these services answer; risk flags are derived from that data
+by the rules above (see [What the data means](#what-the-data-means)) and are not a legal assessment of a subject.
 
 ## License
 

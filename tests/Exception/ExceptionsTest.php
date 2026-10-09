@@ -57,6 +57,12 @@ final class ExceptionsTest extends TestCase
         self::assertSame('Try later (error code X1)', (new ServiceUnavailable('Try later', Source::Vies, 'X1'))->getMessage());
     }
 
+    public function testServiceUnavailableIsNotAConnectionFailureUnlessSaidSo(): void
+    {
+        self::assertFalse((new ServiceUnavailable('Try later', Source::Isir, 'WS4'))->connectionFailed);
+        self::assertTrue((new ServiceUnavailable('Try later', Source::Isir, connectionFailed: true))->connectionFailed);
+    }
+
     public function testServiceUnavailableLeavesTheMessageUntouchedWithoutErrorCode(): void
     {
         self::assertSame('Try later', (new ServiceUnavailable('Try later', Source::Vies))->getMessage());
