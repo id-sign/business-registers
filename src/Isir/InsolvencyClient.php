@@ -40,6 +40,12 @@ final readonly class InsolvencyClient implements InsolvencyRegister
     private const string NAME_FORMAT = '~^(?=\P{L}*\p{L})[^\x00-\x08\x0B\x0C\x0E-\x1F\x{FFFE}\x{FFFF}]+$~uD';
 
     /**
+     * A Latin letter followed by a combining mark: decomposed diacritics (NFD), which the register never holds and the
+     * service does not normalise, so such a name finds nobody.
+     */
+    private const string DECOMPOSED_DIACRITICS = '~\p{Latin}\p{Mn}~u';
+
+    /**
      * Values of maxRelevanceVysledku: the service reports the match kind as relevanceVysledku and answers WS2 instead
      * of falling back to a weaker kind than this.
      */
@@ -85,6 +91,9 @@ final readonly class InsolvencyClient implements InsolvencyRegister
         $firstName = self::trimName($firstName);
         if (1 !== preg_match(self::NAME_FORMAT, $surname) || 1 !== preg_match(self::NAME_FORMAT, $firstName)) {
             throw new InvalidInput('Surname and first name must be UTF-8 text with a letter and without characters XML 1.0 forbids.');
+        }
+        if (1 === preg_match(self::DECOMPOSED_DIACRITICS, $surname) || 1 === preg_match(self::DECOMPOSED_DIACRITICS, $firstName)) {
+            throw new InvalidInput('Surname and first name must use composed diacritics (Unicode NFC).');
         }
         $year = (int) $bornOn->format('Y');
         if ($year < 1 || $year > 9999) {

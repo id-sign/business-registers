@@ -99,14 +99,15 @@ consumers depend on the interface and use it for test doubles.
   unqualified and their order is fixed by the XSD; another order is a SOAP Fault.
 - The three ISIR lookups differ only in the search elements: `find()` sends `ic`; `findByBirthNumber()` sends `rc`
   (trimmed, otherwise as given) and `maxRelevanceVysledku=1`; `findByNameAndBirthDate()` sends `nazevOsoby` and `jmeno`
-  (stripped of Unicode white space at both ends, otherwise as given; the service does not normalise NFD) and
-  `datumNarozeni` as plain `Y-m-d` of the given date (a zone suffix makes the service fall back to a name-only match),
-  `vyhledatPresnouShoduJmen=T` (without it surname and first name match as case-insensitive prefixes, at relevance 4)
-  and `maxRelevanceVysledku=4`. The service reports the match kind in `stav/relevanceVysledku` (1 birth number, 2 IČO, 3
-  case reference, 4 surname + first name + birth date, 5–7 weaker name matches); without `maxRelevanceVysledku` it falls
-  back to a weaker kind, with it it answers `WS2`. The element is undocumented, so the parser rejects an answer above
-  the requested maximum or without the element. `find()` sends no maximum and does not read the relevance: rows of
-  natural persons found by IČO carry 3. No lookup by name alone: it matches other people.
+  (stripped of Unicode white space at both ends, otherwise as given; the service does not normalise NFD and the register
+  holds NFC only, so decomposed diacritics are rejected before the request) and `datumNarozeni` as plain `Y-m-d` of the
+  given date (a zone suffix makes the service fall back to a name-only match), `vyhledatPresnouShoduJmen=T` (without it
+  surname and first name match as case-insensitive prefixes, at relevance 4) and `maxRelevanceVysledku=4`. The service
+  reports the match kind in `stav/relevanceVysledku` (1 birth number, 2 IČO, 3 case reference, 4 surname + first name +
+  birth date, 5–7 weaker name matches); without `maxRelevanceVysledku` it falls back to a weaker kind, with it it
+  answers `WS2`. The element is undocumented, so the parser rejects an answer above the requested maximum or without the
+  element. `find()` sends no maximum and does not read the relevance: rows of natural persons found by IČO carry 3. No
+  lookup by name alone: it matches other people.
 
 ## Bulk calls and collections
 

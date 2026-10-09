@@ -47,8 +47,9 @@ All implement `Exception\ExceptionInterface`.
   else `null`; SOAP Fault with HTTP 200 → the same; `statusCode` 2 (maintenance) and 3 (unavailable) →
   `ServiceUnavailable` with the code; 1 or unknown → `InvalidResponse` with the code; `NENALEZEN` → `null` / absent.
 - **ISIR:** a blank or malformed birth number (not `^\d{6}/?\d{3,4}$` after trim), a surname or first name without a
-  letter, a name that is not valid UTF-8 or holds a character XML 1.0 forbids, or a birth year outside 1–9999 →
-  `InvalidInput` with a fixed message, before any request. HTTP ≠ 200 → `ServiceUnavailable` (`ISIR returned HTTP
+  letter, a name that is not valid UTF-8, holds a character XML 1.0 forbids or decomposed diacritics (a Latin letter
+  followed by a combining mark), or a birth year outside 1–9999 → `InvalidInput` with a fixed message, before any
+  request. HTTP ≠ 200 → `ServiceUnavailable` (`ISIR returned HTTP
   {status} for company id {id}`, `… for a birth number`, `… for a person`; the transport message names the same
   subject — never the birth number, name or birth date; the parameters, the request and the answer that carry them are
   `#[\SensitiveParameter]`, so stack traces leave them out), code = `faultcode` when the body is a SOAP Fault (read

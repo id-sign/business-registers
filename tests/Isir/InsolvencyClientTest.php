@@ -271,6 +271,16 @@ final class InsolvencyClientTest extends TestCase
         self::assertSame(['Nováková', 'Jana'], [(string) $children[0], (string) $children[1]]);
     }
 
+    public function testFindByNameAndBirthDateSendsComposedDiacriticsOfAnyLatinName(): void
+    {
+        $response = self::emptyAnswer();
+
+        new InsolvencyClient(new MockHttpClient($response))->findByNameAndBirthDate('Nguyễn', 'Phượng', new \DateTimeImmutable('1980-01-01'));
+
+        $children = self::requestChildren($response);
+        self::assertSame(['Nguyễn', 'Phượng'], [(string) $children[0], (string) $children[1]]);
+    }
+
     /**
      * @return iterable<string, array{string, string}>
      */
@@ -288,6 +298,8 @@ final class InsolvencyClientTest extends TestCase
         yield 'surname of only no-break spaces' => ["\u{A0}\u{A0}", 'Jana'];
         yield 'first name of only a zero-width space' => ['Nováková', "\u{200B}"];
         yield 'surname without a letter' => [' - ', 'Jana'];
+        yield 'surname with decomposed diacritics' => ["Nova\u{301}kova\u{301}", 'Jana'];
+        yield 'first name with one decomposed letter' => ['Nováková', "Jir\u{30C}ina"];
     }
 
     #[DataProvider('provideRejectedNames')]
@@ -794,6 +806,7 @@ final class InsolvencyClientTest extends TestCase
         yield 'birth number of letters' => [static fn (InsolvencyRegister $r): mixed => $r->findByBirthNumber('SENTINEL-RC')];
         yield 'blank first name' => [static fn (InsolvencyRegister $r): mixed => $r->findByNameAndBirthDate('SENTINEL-SURNAME', ' ', new \DateTimeImmutable('1980-01-01'))];
         yield 'blank surname' => [static fn (InsolvencyRegister $r): mixed => $r->findByNameAndBirthDate(' ', 'SENTINEL-FIRST', new \DateTimeImmutable('1980-01-01'))];
+        yield 'surname with decomposed diacritics' => [static fn (InsolvencyRegister $r): mixed => $r->findByNameAndBirthDate("SENTINEL-SURNAMEa\u{301}", 'SENTINEL-FIRST', new \DateTimeImmutable('1980-01-01'))];
         yield 'surname not in UTF-8' => [static fn (InsolvencyRegister $r): mixed => $r->findByNameAndBirthDate("SENTINEL-SURNAME\xE1", 'SENTINEL-FIRST', new \DateTimeImmutable('1980-01-01'))];
         yield 'birth date outside four-digit years' => [static fn (InsolvencyRegister $r): mixed => $r->findByNameAndBirthDate('SENTINEL-SURNAME', 'SENTINEL-FIRST', new \DateTimeImmutable('1980-01-01')->setDate(19800, 1, 1))];
     }

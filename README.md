@@ -572,11 +572,12 @@ $isir->findByNameAndBirthDate('Nováková', 'Jana', new \DateTimeImmutable('1980
   ignored); anything else is `InvalidInput` before any request. The check digit is not verified: an unknown number
   gives an empty collection.
 - `findByNameAndBirthDate()` sends the calendar date of `$bornOn` in its own time zone. Surname and first name must
-  match the register exactly, ignoring letter case, so pass them as on the identity document and in Unicode NFC
-  (composed diacritics: a decomposed "á", as macOS file names or PDF copies hold it, finds nobody); white space around
-  them, no-break and zero-width spaces included, is ignored. A different spelling (diacritics, a double surname) or a
-  shortened name gives an empty collection. A surname or first name without a letter, a name that is not valid UTF-8
-  or holds a character XML 1.0 forbids, or a birth year outside 1–9999 is `InvalidInput` before any request.
+  match the register exactly, ignoring letter case, so pass them as on the identity document; white space around them,
+  no-break and zero-width spaces included, is ignored. A different spelling (diacritics, a double surname) or a
+  shortened name gives an empty collection. A surname or first name without a letter, a name that is not valid UTF-8,
+  holds a character XML 1.0 forbids or decomposed diacritics (a letter followed by a combining mark, as macOS file
+  names or PDF copies hold it; the register holds Unicode NFC only), or a birth year outside 1–9999 is `InvalidInput`
+  before any request.
 - Both ask the service for that match only; an answer reporting a weaker match, or no match kind at all
   (`relevanceVysledku`), is `InvalidResponse`, never another person's proceedings. There is no lookup by name alone.
 - Exception messages name "a birth number" or "a person", never the birth number, name or date. The parameters that
