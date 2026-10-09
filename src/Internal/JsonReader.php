@@ -40,7 +40,7 @@ final readonly class JsonReader
         try {
             $data = json_decode($json, true, 512, \JSON_THROW_ON_ERROR);
         } catch (\JsonException $e) {
-            throw new InvalidResponse(self::label($source).': response is not valid JSON', $source, $e);
+            throw new InvalidResponse(self::label($source).': response is not valid JSON', $source, previous: $e);
         }
 
         if (!self::isObject($data)) {

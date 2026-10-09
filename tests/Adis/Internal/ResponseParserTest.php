@@ -337,7 +337,8 @@ final class ResponseParserTest extends TestCase
         $error = self::invalidResponseFor(FixtureLoader::read('Adis/status-code-1.xml'));
 
         self::assertSame(Source::Adis, $error->source);
-        self::assertMatchesRegularExpression('~^ADIS: expected .+ at '.preg_quote(self::RESPONSE_PATH.'/r:status/@statusCode', '~').'$~', $error->getMessage());
+        self::assertSame('1', $error->errorCode);
+        self::assertMatchesRegularExpression('~^ADIS: expected .+ at '.preg_quote(self::RESPONSE_PATH.'/r:status/@statusCode', '~').' \(error code 1\)$~', $error->getMessage());
         self::assertStringNotContainsString('SENTINEL-STATUS-TEXT', $error->getMessage());
     }
 
@@ -346,7 +347,8 @@ final class ResponseParserTest extends TestCase
         $error = self::invalidResponseFor(FixtureLoader::read('Adis/status-code-9.xml'));
 
         self::assertSame(Source::Adis, $error->source);
-        self::assertMatchesRegularExpression('~^ADIS: expected .+ at '.preg_quote(self::RESPONSE_PATH.'/r:status/@statusCode', '~').'$~', $error->getMessage());
+        self::assertSame('9', $error->errorCode);
+        self::assertMatchesRegularExpression('~^ADIS: expected .+ at '.preg_quote(self::RESPONSE_PATH.'/r:status/@statusCode', '~').' \(error code 9\)$~', $error->getMessage());
         self::assertStringNotContainsString('SENTINEL-STATUS-TEXT', $error->getMessage());
     }
 
@@ -615,7 +617,8 @@ final class ResponseParserTest extends TestCase
         ));
 
         self::assertSame(Source::Adis, $error->source);
-        self::assertMatchesRegularExpression('~^ADIS: expected .+ at '.preg_quote(self::LIST_PATH.'/r:status/@statusCode', '~').'$~', $error->getMessage());
+        self::assertSame($code, $error->errorCode);
+        self::assertMatchesRegularExpression('~^ADIS: expected .+ at '.preg_quote(self::LIST_PATH.'/r:status/@statusCode', '~').' \(error code '.$code.'\)$~', $error->getMessage());
         self::assertStringNotContainsString('SENTINEL-STATUS-TEXT', $error->getMessage());
     }
 

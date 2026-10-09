@@ -39,6 +39,17 @@ The facade gains the insolvency register section, which reorders two constructor
   is `Ok` but holds no data, as `isVatPayer()` and `isInInsolvency()` do; they returned the flag as absent before.
   Code that builds profiles in tests passes the subject or the proceedings with an `Ok` status.
 
+`InvalidResponse` carries the source's error code, as `InvalidInput` and `ServiceUnavailable` do:
+
+- `InvalidResponse::__construct()` takes `?string $errorCode` as the 3rd parameter; `$previous` moves from the 3rd to
+  the 4th position. A positional previous exception (`new InvalidResponse($message, $source, $e)`) throws a
+  `TypeError` only under `declare(strict_types=1)` (static analysis reports it); without strict types PHP stores the
+  exception's string as `errorCode` and drops `previous`. Search for `new InvalidResponse(` with three positional
+  arguments and pass it as `previous: $e`.
+- ADIS `statusCode` 1 or an unknown code and ISIR `kodChyby` `WS1`, `WS3` or an unknown code set `errorCode` and end
+  the message with ` (error code X)`.
+- The JSON form of a stored `InvalidResponse` in `CompanyProfile` `errors` has the new key `errorCode`.
+
 ADIS addresses follow the address format shared with ARES (README § Addresses):
 
 - `Address::$streetName`, `$houseNumber` and `$orientationNumber` are filled from the ADIS street line when it ends in

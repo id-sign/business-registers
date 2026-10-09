@@ -186,8 +186,9 @@ tells them apart:
 
 `SectionStatus` is string-backed (`not_requested`, `ok`, `not_found`, `not_applicable`, `unavailable`, `rejected`) and
 `json_encode($profile)` works. The status values are a stable contract. A stored exception in `errors` encodes its
-public properties only — `source` (`ServiceUnavailable`, `InvalidResponse`) and `errorCode` (`ServiceUnavailable`,
-`InvalidInput`), e.g. `{"source":"adis","errorCode":null}`; the message and the trace are not part of the JSON.
+public properties only — `source` (`ServiceUnavailable`, `InvalidResponse`), `errorCode` (all three exceptions) and
+`connectionFailed` (`ServiceUnavailable`), e.g. `{"source":"isir","errorCode":"WS1"}`; the message and the trace are
+not part of the JSON.
 
 #### Flags
 
@@ -567,9 +568,9 @@ Every exception implements `IdSign\BusinessRegisters\Exception\ExceptionInterfac
 
 `InvalidInput` has `?string $errorCode`; `ServiceUnavailable` has `Source $source`, `?string $errorCode` and
 `bool $connectionFailed` (the source was not reached: a transport error or timeout, not an error status or code);
-`InvalidResponse` has `Source $source`. `Source` is `Ares`, `Adis`, `Vies` or `Isir`. `CompanyLookup::byCompanyId()`
-throws only ARES errors; an exception from a section is recorded in the profile (`Unavailable` or `Rejected`, see
-[Five meanings of `null`](#five-meanings-of-null)).
+`InvalidResponse` has `Source $source` and `?string $errorCode`. `Source` is `Ares`, `Adis`, `Vies` or `Isir`.
+`CompanyLookup::byCompanyId()` throws only ARES errors; an exception from a section is recorded in the profile
+(`Unavailable` or `Rejected`, see [Five meanings of `null`](#five-meanings-of-null)).
 
 ```php
 use IdSign\BusinessRegisters\Exception\InvalidInput;
@@ -583,7 +584,7 @@ try {
 } catch (ServiceUnavailable $e) {
     // retry later; $e->source says which register
 } catch (InvalidResponse $e) {
-    // log and report; $e->source, the message names the key path
+    // log and report; $e->source and $e->errorCode, the message names the key path
 }
 ```
 
@@ -597,9 +598,9 @@ Rules for messages:
 - Messages never contain response text (ARES `popis`, ADIS `statusText`, ISIR `textChyby` / `popisChyby`, SOAP
   `faultstring`, VIES `message`) or record data. They may contain the id you passed in, the HTTP status and, for a
   transport failure, the error text of the HTTP client.
-- `InvalidResponse` messages contain only the source label, the key path and the expected type, for example
-  `ARES: expected string at sidlo.nazevObce`. JSON paths are jq-style with 0-based indices (`zaznamy[0].ico`); XML paths
-  are XPath with 1-based indices
+- `InvalidResponse` messages contain only the source label, the key path, the expected type and the error-code suffix,
+  for example `ARES: expected string at sidlo.nazevObce`. JSON paths are jq-style with 0-based indices
+  (`zaznamy[0].ico`); XML paths are XPath with 1-based indices
   (`s:Body/r:StatusNespolehlivySubjektRozsirenyResponse/r:statusSubjektu[3]/@typSubjektu`).
 
 Per source:
@@ -609,11 +610,11 @@ Per source:
 | ARES   | 404 "not found"                                                                                                                     | `find()` returns `null`; `findMany()` leaves the id out                                                                                          |
 | ARES   | HTTP 400                                                                                                                            | `InvalidInput`, `errorCode` = ARES `subKod`; more than 1 000 search results is `VYSTUP_PRILIS_MNOHO_VYSLEDKU` — ask the user to refine the query |
 | ARES   | other status, transport error, timeout                                                                                              | `ServiceUnavailable`                                                                                                                             |
-| ADIS   | status code 1, unknown code                                                                                                         | `InvalidResponse`                                                                                                                                |
+| ADIS   | status code 1, unknown code                                                                                                         | `InvalidResponse`, `errorCode` = the status code                                                                                                 |
 | ADIS   | status code 2 (nightly maintenance), 3, SOAP Fault, HTTP ≠ 200, transport error, timeout                                            | `ServiceUnavailable`, `errorCode` = status code 2 or 3, or the SOAP `faultcode` (also with HTTP ≠ 200); otherwise `null`                         |
 | ISIR   | empty result (`WS2`)                                                                                                                | `find()` returns an empty collection                                                                                                             |
 | ISIR   | `WS4` (data not current), `SQL1`, `SERVER1`, SOAP Fault, HTTP ≠ 200, transport error, timeout                                       | `ServiceUnavailable`, `errorCode` = the ISIR code or the SOAP `faultcode` (also with HTTP ≠ 200); otherwise `null`                               |
-| ISIR   | `WS1`, `WS3`, unknown code, truncated answer (`pocetVysledku` above the rows returned), more than 100 proceedings                   | `InvalidResponse`                                                                                                                                |
+| ISIR   | `WS1`, `WS3`, unknown code, truncated answer (`pocetVysledku` above the rows returned), more than 100 proceedings                   | `InvalidResponse`, `errorCode` = the ISIR code for `WS1`, `WS3` and an unknown code; otherwise `null`                                            |
 | VIES   | `INVALID_INPUT`, `INVALID_REQUESTER_INFO`, HTTP 400                                                                                 | `InvalidInput`, `errorCode` = VIES code                                                                                                          |
 | VIES   | every other code (`MS_UNAVAILABLE`, `TIMEOUT`, `*_MAX_CONCURRENT_REQ*`, `VAT_BLOCKED`, `IP_BLOCKED`, unknown codes), other statuses | `ServiceUnavailable`, `errorCode` = VIES code when the body is readable                                                                          |
 | any    | element of the wrong type in an id list, a duplicate in a collection constructor                                                    | `InvalidInput`                                                                                                                                   |

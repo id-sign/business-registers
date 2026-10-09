@@ -131,10 +131,10 @@ final class ResponseParser
         $code = $status->attribute('statusCode');
         match ($code) {
             '0' => null,
-            '1' => throw $status->invalid('@statusCode', 'status code 0'),
+            '1' => throw $status->invalid('@statusCode', 'status code 0', $code),
             '2' => throw new ServiceUnavailable('ADIS is in scheduled maintenance', Source::Adis, $code),
             '3' => throw new ServiceUnavailable('ADIS service is unavailable', Source::Adis, $code),
-            default => throw $status->invalid('@statusCode', 'status code 0 to 3'),
+            default => throw $status->invalid('@statusCode', 'status code 0 to 3', $code),
         };
 
         return [$response, $status->dateAttribute('odpovedGenerovana')];

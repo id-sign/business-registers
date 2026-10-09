@@ -20,7 +20,8 @@
   Methods: `element` / `optionalElement`, `elements`, `attribute`, `dateAttribute`, and over child text `string`,
   `int` (through `Integers::fromDigits()`), `optionalDate` (through `Dates::date()`, no mandatory twin) and
   `optionalDateTimePrague` (through `Dates::dateTimePrague()`, no mandatory twin), each mandatory/optional where it
-  applies, plus `invalid($relative, $expected)`. `JsonReader::int` uses `Integers::fromDigits()` for text values too.
+  applies, plus `invalid($relative, $expected, $errorCode = null)`. `JsonReader::int` uses `Integers::fromDigits()`
+  for text values too.
 - New source needs (e.g. `int` or `date` on child elements) are added as new methods; existing contracts do not change.
 
 ## Dates

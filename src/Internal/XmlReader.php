@@ -46,7 +46,7 @@ final readonly class XmlReader
             $document = \Dom\XMLDocument::createFromString($xml, \LIBXML_NONET);
         } catch (\DOMException|\ValueError $e) {
             // an empty string is a ValueError, not a parse error
-            throw new InvalidResponse(self::label($source).': response is not well-formed XML', $source, $e);
+            throw new InvalidResponse(self::label($source).': response is not well-formed XML', $source, previous: $e);
         } finally {
             libxml_clear_errors();
             libxml_use_internal_errors($previous);
@@ -208,11 +208,12 @@ final readonly class XmlReader
      *
      * @param string $relative "@attribute" or a child element name
      */
-    public function invalid(string $relative, string $expected): InvalidResponse
+    public function invalid(string $relative, string $expected, ?string $errorCode = null): InvalidResponse
     {
         return new InvalidResponse(
             \sprintf('%s: expected %s at %s', self::label($this->source), $expected, $this->childPath($relative)),
             $this->source,
+            $errorCode,
         );
     }
 

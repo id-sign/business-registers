@@ -16,6 +16,7 @@ use IdSign\BusinessRegisters\CompanyId;
 use IdSign\BusinessRegisters\CompanyProfile;
 use IdSign\BusinessRegisters\Exception\ExceptionInterface;
 use IdSign\BusinessRegisters\Exception\InvalidInput;
+use IdSign\BusinessRegisters\Exception\InvalidResponse;
 use IdSign\BusinessRegisters\Exception\ServiceUnavailable;
 use IdSign\BusinessRegisters\Internal\JsonReader;
 use IdSign\BusinessRegisters\Isir\InsolvencyProceeding;
@@ -1131,6 +1132,18 @@ final class CompanyProfileTest extends TestCase
         $data = json_decode(json_encode(self::profile(), \JSON_THROW_ON_ERROR), true, flags: \JSON_THROW_ON_ERROR);
 
         self::assertNull(self::jsonAt($data, 'insolvencies'));
+    }
+
+    public function testStoredInvalidResponseEncodesItsSourceAndErrorCodeOnly(): void
+    {
+        $profile = self::profile(
+            statuses: [Section::Insolvency->name => SectionStatus::Unavailable],
+            errors: [Section::Insolvency->name => new InvalidResponse('ISIR: unexpected kodChyby', Source::Isir, 'WS1')],
+        );
+
+        $data = json_decode(json_encode($profile, \JSON_THROW_ON_ERROR), true, flags: \JSON_THROW_ON_ERROR);
+
+        self::assertSame(['source' => 'isir', 'errorCode' => 'WS1'], self::jsonAt($data, 'errors', 'Insolvency'));
     }
 
     private static function jsonAt(mixed $data, string|int ...$path): mixed
